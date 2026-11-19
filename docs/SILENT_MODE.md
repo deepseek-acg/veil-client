@@ -57,11 +57,11 @@ Set the `Server` dropdown on each combat module. `Auto` detects the connected se
 
 1. Bind it to a key in the module list (e.g. END).
 2. Before accepting the screenshare, press the key.
-3. All modules disable, settings lists are cleared from heap, the game log is scrubbed of mist signatures, and a `[Perf] GC cycle complete` message appears in chat.
+3. All modules disable, settings lists are cleared from heap, the game log is scrubbed of veil signatures, and a `[Perf] GC cycle complete` message appears in chat.
 
 **After panic**, the client behaves as vanilla until the next restart. Settings are **not** saved after panic — the config file retains its pre-panic state.
 
-`LogScrubber` (category: Misc) can run persistently during a session. When enabled it installs a Log4j2 filter that drops log records naming mist classes, so the log file never accumulates stack traces during normal play.
+`LogScrubber` (category: Misc) can run persistently during a session. When enabled it installs a Log4j2 filter that drops log records naming veil classes, so the log file never accumulates stack traces during normal play.
 
 ---
 

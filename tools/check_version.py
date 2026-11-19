@@ -30,8 +30,13 @@ def main():
         sys.exit("no mod_version in gradle.properties")
     version = match.group(1).strip()
 
+    name_match = re.search(r"(?m)^archives_base_name=(.+)$", props)
+    if not name_match:
+        sys.exit("no archives_base_name in gradle.properties")
+    archive = name_match.group(1).strip()
+
     jar_dir = Path(args.jar_dir)
-    jar = jar_dir / f"mist-client-{version}.jar"
+    jar = jar_dir / f"{archive}-{version}.jar"
     if not jar.exists():
         found = sorted(path.name for path in jar_dir.glob("*.jar")) if jar_dir.exists() else []
         sys.exit(f"no {jar.name} in {jar_dir} (found: {found or 'nothing'})")

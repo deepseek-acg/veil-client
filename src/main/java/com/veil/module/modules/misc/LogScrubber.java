@@ -1,5 +1,5 @@
 // lang: Java, file: LogScrubber.java, target: Fabric MC 26.3
-// Intercepts Log4j2 at module enable and suppresses records that name mist classes,
+// Intercepts Log4j2 at module enable and suppresses records that name veil classes,
 // so the game log does not accumulate stack traces during normal play.
 package com.veil.module.modules.misc;
 
@@ -16,7 +16,7 @@ import org.apache.logging.log4j.core.filter.AbstractFilter;
 
 public final class LogScrubber extends Module {
 
-    private MistLogFilter activeFilter = null;
+    private VeilLogFilter activeFilter = null;
 
     public LogScrubber() {
         super("LogScrubber", "Suppresses veil class names from the game log", Category.MISC);
@@ -25,7 +25,7 @@ public final class LogScrubber extends Module {
     @Override
     public void onEnable() {
         if (activeFilter != null) return;
-        activeFilter = new MistLogFilter();
+        activeFilter = new VeilLogFilter();
         LoggerContext ctx = (LoggerContext) LogManager.getContext(false);
         ctx.getConfiguration().addFilter(activeFilter);
         ctx.updateLoggers();
@@ -40,7 +40,7 @@ public final class LogScrubber extends Module {
         activeFilter = null;
     }
 
-    private static final class MistLogFilter extends AbstractFilter {
+    private static final class VeilLogFilter extends AbstractFilter {
 
         @Override
         public Result filter(LogEvent event) {

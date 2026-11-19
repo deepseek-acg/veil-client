@@ -226,7 +226,7 @@ would be interrupted, and the slot restore does not check that the food actually
   module row. Binds are stored as the scancode the key event carries, so they follow the physical
   key, not the keyboard layout's character.
 - **Persistence**: module on/off state, keybinds and every setting are written to
-  `config/mist-client.json` and restored at startup. A value that no longer matches its setting type
+  `config/veil-client.json` and restored at startup. A value that no longer matches its setting type
   or range is skipped and the default is kept; the rest of the file still loads.
 - **Pausing under input lock**: while a module holds `InputLock` (currently `SmarterAutoTotem`),
   events are not delivered to other modules, and their `onPause()` runs: `CrystalAura` abandons its
