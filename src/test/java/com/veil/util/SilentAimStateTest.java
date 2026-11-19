@@ -1,5 +1,5 @@
 // lang: Java, file: SilentAimStateTest.java, target: JVM unit test
-package com.mist.util;
+package com.veil.util;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
