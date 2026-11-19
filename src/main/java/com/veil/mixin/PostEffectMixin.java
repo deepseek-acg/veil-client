@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.util.List;
 
 /**
- * Puts {@code mist:grayscale} on the frame's post-effect list while the Grayscale module is on.
+ * Puts {@code veil:grayscale} on the frame's post-effect list while the Grayscale module is on.
  *
  * <p>The entry goes on the list vanilla builds each frame and later turns into post chains, so the
  * effect is applied by the normal pass over the finished frame; one that fails to load is skipped and

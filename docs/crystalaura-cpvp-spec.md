@@ -76,7 +76,7 @@ the module, not an observed result.
 
 | condition | check | action |
 |---|---|---|
-| GUI / inventory open | `Mist.mc.gui.screen() != null` | return from onTick() |
+| GUI / inventory open | `Veil.mc.gui.screen() != null` | return from onTick() |
 | Self dead | `self.isDeadOrDying()` | return from onTick() |
 | Target just died | `target.isDeadOrDying()` | skip target |
 

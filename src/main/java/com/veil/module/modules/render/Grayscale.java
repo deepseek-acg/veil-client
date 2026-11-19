@@ -12,7 +12,7 @@ import net.minecraft.resources.Identifier;
  * brightness: the picture reads like a black-and-white texture pack without replacing a single
  * texture.
  *
- * <p>It does that with a post effect, not with textures: {@code assets/mist/post_effect/grayscale.json}
+ * <p>It does that with a post effect, not with textures: {@code assets/veil/post_effect/grayscale.json}
  * runs one full-screen pass over the finished frame that replaces every pixel with its luma, then blits
  * the result back. The module itself only decides whether that effect is on the frame — see
  * {@code PostEffectMixin}.

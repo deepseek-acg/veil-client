@@ -40,6 +40,6 @@ jobs:
       - name: Upload jar
         uses: actions/upload-artifact@v4
         with:
-          name: mist-client-jar
-          path: build/libs/mist-client-*.jar
+          name: veil-client-jar
+          path: build/libs/veil-client-*.jar
           if-no-files-found: error

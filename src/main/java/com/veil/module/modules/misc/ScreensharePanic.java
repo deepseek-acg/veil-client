@@ -58,13 +58,13 @@ public final class ScreensharePanic extends Module {
         try {
             List<String> lines = Files.readAllLines(logFile, StandardCharsets.UTF_8);
             List<String> clean = lines.stream()
-                    .filter(line -> !containsMistSignature(line))
+                    .filter(line -> !containsVeilSignature(line))
                     .collect(Collectors.toList());
             Files.write(logFile, clean, StandardCharsets.UTF_8);
         } catch (IOException ignored) {}
     }
 
-    private static boolean containsMistSignature(String line) {
+    private static boolean containsVeilSignature(String line) {
         String lower = line.toLowerCase();
         return lower.contains("com.veil") || lower.contains("veilclient") || lower.contains("[veil]");
     }

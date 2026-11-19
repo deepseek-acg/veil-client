@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Cut a mist-client release in one step.
+"""Cut a veil-client release in one step.
 
-    python3 tools/release.py --version 0.1.11 --notes release-notes/0.1.11.md [--dry-run]
+    python3 tools/release.py --version 0.1.0 --notes release-notes/0.1.0.md [--dry-run]
 
 Steps, in order, aborting at the first failure:
 
@@ -32,7 +32,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
-REPO_SLUG = "deepseek-acg/mist-client"
+REPO_SLUG = "deepseek-acg/veil-client"
 EXCLUDES = {".git", "build", ".gradle", ".idea"}
 AUTHOR = ["-c", "user.name=deepseek-acg", "-c", "user.email=deepseek-acg@users.noreply.github.com"]
 
@@ -52,6 +52,14 @@ def git(*args, cwd=None, check=True):
     if check and result.returncode != 0:
         sys.exit(f"git {' '.join(args)} failed ({result.returncode})")
     return result.stdout.strip()
+
+
+def property_value(props_path, key):
+    with open(props_path, encoding="utf-8") as props:
+        for line in props:
+            if line.startswith(f"{key}="):
+                return line.split("=", 1)[1].strip()
+    sys.exit(f"no {key} in {props_path}")
 
 
 def github_token(repo_dir):
@@ -89,16 +97,12 @@ def copy_tree(source, target):
 
 
 def read_version(props_path):
-    with open(props_path, encoding="utf-8") as props:
-        for line in props:
-            if line.startswith("mod_version="):
-                return line.split("=", 1)[1].strip()
-    sys.exit(f"no mod_version in {props_path}")
+    return property_value(props_path, "mod_version")
 
 
 def build(repo_dir, workdir_root, version, java_home):
     """Copy the tree out of the repo path and build it there. Returns (jar path, build log tail)."""
-    workdir = tempfile.mkdtemp(prefix=f"mist-{version}-", dir=workdir_root)
+    workdir = tempfile.mkdtemp(prefix=f"veil-{version}-", dir=workdir_root)
     copy_tree(repo_dir, workdir)
     env = dict(os.environ)
     env["JAVA_HOME"] = java_home
@@ -115,12 +119,12 @@ def build(repo_dir, workdir_root, version, java_home):
     for line in output.splitlines():
         if "verifyMixinTargets:" in line:
             print(line.strip())
-    return os.path.join(workdir, "build", "libs", f"mist-client-{version}.jar"), output
+    return os.path.join(workdir, "build", "libs", f"veil-client-{version}.jar"), output
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Cut a mist-client release.")
-    parser.add_argument("--version", required=True, help="release version, e.g. 0.1.11 (leading v is ignored)")
+    parser = argparse.ArgumentParser(description="Cut a veil-client release.")
+    parser.add_argument("--version", required=True, help="release version, e.g. 0.1.0 (leading v is ignored)")
     parser.add_argument("--notes", help="markdown file whose contents go into the release body")
     parser.add_argument("--summary", default="", help="one-line summary at the top of the release body")
     parser.add_argument("--dry-run", action="store_true", help="build and verify, then stop before committing")
@@ -129,7 +133,7 @@ def main():
     version = args.version.lstrip("v")
     tag = f"v{version}"
     repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    jar_name = f"mist-client-{version}.jar"
+    jar_name = f"veil-client-{version}.jar"
 
     java_home = os.environ.get("JAVA_HOME")
     if not java_home:
@@ -193,7 +197,7 @@ def main():
             notes = handle.read().strip()
 
     body = "\n\n".join(part for part in [
-        args.summary or f"Mist {version} — Minecraft 26.3",
+        args.summary or f"Veil {version} — Minecraft 26.3",
         "**Requires:** Minecraft 26.3, Fabric Loader 0.20.1+, Fabric API 0.166.2+26.3, Java 25.",
         f"## Commits since {previous_tag or 'the first release'}\n\n```\n{commits}\n```" if commits else "",
         notes,
@@ -201,7 +205,7 @@ def main():
         "- No Minecraft client was available in the build environment: the jar compiles, packages and "
         "resolves its mixins against 26.3, but module behaviour is not observed here.\n"
         "- Module keybinds are set in the click GUI (Bind row in a module's settings); right-click "
-        "clears a bind. Settings persist in `config/mist-client.json`.",
+        "clears a bind. Settings persist in `config/veil-client.json`.",
         "## Verifying the download\n\n"
         f"```\nSHA-256 {sha}\n{jar_name}  ({size:,} bytes)\n```\n\n"
         f"On Windows: `certutil -hashfile {jar_name} SHA256`\n"
@@ -236,7 +240,7 @@ def main():
     status, release = api(token, "POST", f"https://api.github.com/repos/{REPO_SLUG}/releases", {
         "tag_name": tag,
         "target_commitish": git("rev-parse", "HEAD", cwd=repo_dir),
-        "name": f"Mist {version} — Minecraft 26.3",
+        "name": f"Veil {version} — Minecraft 26.3",
         "body": body,
         "draft": False,
         "prerelease": False,

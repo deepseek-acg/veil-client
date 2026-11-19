@@ -30,7 +30,7 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * The Mist GUI: a category menu on the left and one floating panel per category, in the style of the
+ * The Veil GUI: a category menu on the left and one floating panel per category, in the style of the
  * old Vape click GUI. Left-click a module to toggle it, right-click to open its settings.
  *
  * <p>26.3 note: Screen#render is gone; drawing goes through GuiGraphicsExtractor in
@@ -575,7 +575,7 @@ public final class ClickGUI extends Screen {
         ctx.fill(menuX, menuY + MENU_HDR_H - 1, menuX + MENU_W, menuY + MENU_HDR_H,
                 Anim.alpha(ColorTheme.accentDim(), ms));
         int titleY = centerY(menuY, MENU_HDR_H - 1);
-        ctx.text(font, "MIST", menuX + 8, titleY, TEXT_ON, false);
+        ctx.text(font, "VEIL", menuX + 8, titleY, TEXT_ON, false);
 
         // Theme swatch: a small square of the accent, framed so it reads as a button.
         boolean swatchHover = inside(mouseX, mouseY, menuX + MENU_W - 28, menuY + 2, 12, MENU_HDR_H - 4);
