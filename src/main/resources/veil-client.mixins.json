@@ -1,0 +1,27 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.veil.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "BrandRetrieverMixin",
+    "ClientInboundMixin",
+    "ClientInputAccessor",
+    "ClientPlayNetworkHandlerMixin",
+    "FreecamCameraMixin",
+    "FreecamEntityMixin",
+    "FreecamInputMixin",
+    "GameModeAttackMixin",
+    "HudRenderMixin",
+    "KeyInputMixin",
+    "MinecraftAccessor",
+    "MinecraftClientMixin",
+    "MouseInputMixin",
+    "PostEffectMixin",
+    "SilentRotationMixin",
+    "TelemetryManagerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
