@@ -1,0 +1,45 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # `build` runs `check`, which runs verifyMixinTargets: every @Inject and @Accessor descriptor is
+      # compared against the real Minecraft jar, so a wrong one fails here instead of at world join.
+      - name: Build
+        run: |
+          chmod +x gradlew
+          ./gradlew build --console=plain --stacktrace
+
+      # A jar whose declared version disagrees with gradle.properties ships mislabelled.
+      - name: Jar version matches gradle.properties
+        run: python3 tools/check_version.py --jar-dir build/libs
+
+      # And a tag that disagrees with the tree it points at is what broke v0.1.7.
+      - name: Tag matches the built version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python3 tools/check_version.py --jar-dir build/libs --tag "$GITHUB_REF_NAME"
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: mist-client-jar
+          path: build/libs/mist-client-*.jar
+          if-no-files-found: error

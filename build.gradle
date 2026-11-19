@@ -1,0 +1,421 @@
+import groovy.json.JsonSlurper
+import org.objectweb.asm.AnnotationVisitor
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassVisitor
+import org.objectweb.asm.FieldVisitor
+import org.objectweb.asm.MethodVisitor
+import org.objectweb.asm.Opcodes
+import org.objectweb.asm.Type
+
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        // Build-time only: used by verifyMixinTargets to read class files without loading them.
+        // 9.10+ is required: Java 25 class files are major version 69, which older ASM rejects.
+        classpath "org.ow2.asm:asm:9.10.1"
+    }
+}
+
+plugins {
+    id "net.fabricmc.fabric-loom" version "${loom_version}"
+    id "java"
+}
+
+version = project.mod_version
+group = project.maven_group
+base { archivesName = project.archives_base_name }
+
+repositories {
+    mavenCentral()
+}
+
+loom {
+    // Minecraft 26.x ships unobfuscated, so there are no mappings to apply and the refmap is
+    // only kept for tooling that still looks for one.
+    mixin {
+        defaultRefmapName = "veil-client.refmap.json"
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+
+    // Loom 1.19 no longer needs modImplementation: nothing is remapped any more.
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // Tests run on the plain JVM and never ship: the aim trajectory is pure Java, so it can be
+    // checked without a client.
+    testImplementation "org.junit.jupiter:junit-jupiter:5.11.4"
+    // Gradle 9 no longer puts the platform launcher on the test runtime classpath by itself.
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.11.4"
+}
+
+processResources {
+    inputs.property "version", project.version
+    filteringCharset "UTF-8"
+    filesMatching("fabric.mod.json") {
+        expand("version": project.version,
+               "minecraft_version": project.minecraft_version,
+               "jdk_version": project.jdk_version)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = Integer.parseInt(project.jdk_version)
+    options.compilerArgs += ["-Xlint:none", "-nowarn"]
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+    withSourcesJar()
+}
+
+tasks.named("test") {
+    useJUnitPlatform()
+}
+
+jar {
+    manifest {
+        attributes(
+            "Implementation-Title": "Minecraft",
+            "Implementation-Version": project.minecraft_version
+        )
+    }
+}
+
+// ── mixin target verification ────────────────────────────────────────────────────────────────────
+// Mixin rejects an injection whose handler descriptor does not match the target method, but only at
+// runtime, when the target class is first loaded — so a bad @Inject compiles cleanly and then kills
+// the client on world join (that is how 0.1.7 shipped). This task re-does the argument-descriptor
+// comparison Mixin performs, against the actual Minecraft jar, as part of `check`.
+tasks.register("verifyMixinTargets") {
+    group = "verification"
+    description = "Verifies every @Inject/@Accessor in the mixin config against the Minecraft jar."
+    dependsOn tasks.named("classes")
+
+    def configFile = file("src/main/resources/veil-client.mixins.json")
+    def classesDirProvider = layout.buildDirectory.dir("classes/java/main")
+    def compilePath = configurations.compileClasspath
+
+    inputs.file(configFile)
+    inputs.files(classesDirProvider)
+
+    doLast {
+        def classesDir = classesDirProvider.get().asFile
+        def config = new JsonSlurper().parse(configFile) as Map
+        def pkg = config["package"] as String
+        def mixinNames = []
+        ["mixins", "client", "server"].each { key ->
+            if (config[key] instanceof List) mixinNames.addAll(config[key])
+        }
+
+        def mcJar = null
+        def mcJarName = ""
+        for (def candidate : compilePath.files) {
+            try {
+                def zf = new java.util.zip.ZipFile(candidate)
+                if (zf.getEntry("net/minecraft/client/Minecraft.class") != null) {
+                    mcJar = zf
+                    mcJarName = candidate.name
+                    break
+                }
+                zf.close()
+            } catch (Exception ignored) {
+                // not a jar we can read; keep looking
+            }
+        }
+        if (mcJar == null) {
+            throw new GradleException(
+                    "verifyMixinTargets: no jar containing net/minecraft/client/Minecraft.class on " +
+                    "the compile classpath, so mixin targets cannot be checked")
+        }
+
+        def readTarget = { String internalName ->
+            def entry = mcJar.getEntry(internalName + ".class")
+            entry == null ? null : mcJar.getInputStream(entry).bytes
+        }
+
+        def problems = []
+        def checked = 0
+
+        mixinNames.each { simpleName ->
+            def internal = pkg.replace('.', '/') + "/" + simpleName
+            def classFile = new File(classesDir, internal + ".class")
+            if (!classFile.exists()) {
+                problems << "${simpleName}: compiled class ${internal}.class is missing".toString()
+                return
+            }
+
+            def info = MixinVerifier.read(classFile.bytes)
+            if (info.targets.isEmpty()) {
+                problems << "${simpleName}: no @Mixin target could be read".toString()
+                return
+            }
+
+            def handlers = info.handlers.findAll { it.kind != null && it.selector != null }
+
+            info.targets.each { String targetInternal ->
+                def targetBytes = readTarget(targetInternal)
+                if (targetBytes == null) {
+                    problems << ("${simpleName}: target " + targetInternal.replace('/', '.') +
+                            " is not in " + mcJarName + " (Mixin would fail with ClassNotFoundException)").toString()
+                    return
+                }
+                def members = MixinVerifier.scan(targetBytes)
+
+                handlers.each { h ->
+                    def handlerName = h.name as String
+                    def handlerDesc = h.descriptor as String
+                    def where = "${simpleName}.${handlerName}".toString()
+
+                    if (h.kind == "accessor") {
+                        checked++
+                        def fieldName = (h.selector ?: handlerName) as String
+                        def mt = Type.getMethodType(handlerDesc)
+                        def fieldDesc = mt.argumentTypes.length == 1
+                                ? mt.argumentTypes[0].descriptor
+                                : mt.returnType.descriptor
+                        def matches = members.fields.any { it == fieldName + ":" + fieldDesc }
+                        if (!matches) {
+                            def near = members.fields.findAll { it.startsWith(fieldName + ":") }
+                            problems << ("${where}: @Accessor for field '${fieldName}' expects ${fieldDesc}, " +
+                                    (near.isEmpty()
+                                            ? "but ${targetInternal.replace('/', '.')} has no field of that name"
+                                            : "but the field is ${near.join(', ')}")).toString()
+                        }
+                        return
+                    }
+
+                    // @Inject: compare against the method Mixin would bind to.
+                    checked++
+                    def handlerArgs = MixinVerifier.argsOf(MixinVerifier.injectTargetDescriptor(handlerDesc))
+                    def selector = h.selector as String
+                    def targetName = MixinVerifier.selectorName(selector)
+                    def byName = members.methods.findAll {
+                        MixinVerifier.selectorName(it) == targetName
+                    }
+
+                    if (selector.contains("(")) {
+                        // A fully qualified selector pins the target, but Mixin still requires the
+                        // handler to declare that method's own parameters — a handler written
+                        // against LocalPlayer fails even when the selector says Player.
+                        def wantArgs = MixinVerifier.argsOf(MixinVerifier.selectorDescriptor(selector))
+                        def exact = byName.findAll {
+                            MixinVerifier.argsOf(MixinVerifier.descriptorOf(it)) == wantArgs
+                        }
+                        if (exact.isEmpty()) {
+                            problems << ("${where}: @Inject target ${selector} does not exist on " +
+                                    "${targetInternal.replace('/', '.')}; available: " +
+                                    (byName.isEmpty() ? "none" : byName.join(', '))).toString()
+                        } else if (handlerArgs != wantArgs) {
+                            problems << ("${where}: @Inject names ${selector} but the handler declares " +
+                                    "${handlerArgs}; Mixin needs the handler's parameters to match the " +
+                                    "target method's").toString()
+                        }
+                    } else {
+                        def ok = byName.any {
+                            MixinVerifier.argsOf(MixinVerifier.descriptorOf(it)) == handlerArgs
+                        }
+                        if (!ok) {
+                            problems << ("${where}: @Inject '${selector}' handler takes ${handlerArgs}, but " +
+                                    "${targetInternal.replace('/', '.')} has " +
+                                    (byName.isEmpty()
+                                            ? "no method of that name"
+                                            : byName.collect { MixinVerifier.argsOf(MixinVerifier.descriptorOf(it)) }.join(', ')))
+                                    .toString()
+                        }
+                    }
+                }
+            }
+        }
+
+        mcJar.close()
+
+        if (!problems.isEmpty()) {
+            throw new GradleException("verifyMixinTargets: ${problems.size()} mixin injection(s) do not " +
+                    "match Minecraft ${project.minecraft_version}:\n  - " + problems.join("\n  - ") +
+                    "\nMixin would reject these at runtime, when the target class first loads.")
+        }
+        logger.lifecycle("verifyMixinTargets: ${mixinNames.size()} mixins, ${checked} injection(s) checked " +
+                "against ${mcJarName}")
+    }
+}
+
+tasks.named("check") {
+    dependsOn tasks.named("verifyMixinTargets")
+}
+
+/**
+ * Reads class files with ASM so neither the mixin nor the Minecraft class has to be loaded.
+ */
+class MixinVerifier {
+
+    static final String MIXIN_ANNOTATION = "Lorg/spongepowered/asm/mixin/Mixin;"
+    static final String INJECT_ANNOTATION = "Lorg/spongepowered/asm/mixin/injection/Inject;"
+    static final String ACCESSOR_ANNOTATION = "Lorg/spongepowered/asm/mixin/gen/Accessor;"
+    static final String CALLBACK_INFO = "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;"
+    static final String CALLBACK_INFO_RETURNABLE =
+            "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;"
+
+    static Map read(byte[] bytes) {
+        def collector = new Collector()
+        new ClassReader(bytes).accept(collector,
+                ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES)
+        return [targets: collector.targets, handlers: collector.handlers]
+    }
+
+    static Map scan(byte[] bytes) {
+        def members = new Members()
+        new ClassReader(bytes).accept(members,
+                ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES)
+        return [methods: members.methods, fields: members.fields]
+    }
+
+    static String selectorName(String selector) {
+        def open = selector.indexOf('(')
+        return open < 0 ? selector : selector.substring(0, open)
+    }
+
+    static String selectorDescriptor(String selector) {
+        return selector.substring(selector.indexOf('('))
+    }
+
+    /** "name(Ljava/lang/String;)V" -> "(Ljava/lang/String;)V" */
+    static String descriptorOf(String member) {
+        return member.substring(member.indexOf('('))
+    }
+
+    static String argsOf(String descriptor) {
+        return descriptor.substring(0, descriptor.lastIndexOf(')') + 1)
+    }
+
+    /**
+     * The descriptor the target method must have for an @Inject handler: the handler's own parameters
+     * minus the trailing CallbackInfo/CallbackInfoReturnable, and a void return.
+     */
+    static String injectTargetDescriptor(String handlerDescriptor) {
+        def type = Type.getMethodType(handlerDescriptor)
+        def args = type.argumentTypes as List
+        if (!args.isEmpty()) {
+            def last = args.get(args.size() - 1).descriptor
+            if (last == CALLBACK_INFO || last == CALLBACK_INFO_RETURNABLE) {
+                args = args.subList(0, args.size() - 1)
+            }
+        }
+        return "(" + args.collect { it.descriptor }.join("") + ")V"
+    }
+
+    private static class Collector extends ClassVisitor {
+        final List<String> targets = []
+        final List<Map> handlers = []
+
+        Collector() {
+            super(Opcodes.ASM9)
+        }
+
+        @Override
+        AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
+            if (descriptor != MIXIN_ANNOTATION) return null
+            return new AnnotationVisitor(Opcodes.ASM9) {
+                @Override
+                void visit(String name, Object value) {
+                    if (name == "value" && value instanceof Type) {
+                        targets << ((Type) value).internalName
+                    } else if (name == "targets") {
+                        targets << value.toString().replace('.', '/')
+                    }
+                }
+
+                /**
+                 * An array-valued element ({@code @Mixin(value = X.class)} compiled as a class
+                 * array) arrives here, not through visit(). Both spellings map to the element name
+                 * reported to visitArray: "value" for class literals, "targets" for strings.
+                 */
+                @Override
+                AnnotationVisitor visitArray(String name) {
+                    if (name != "value" && name != "targets") return null
+                    return new AnnotationVisitor(Opcodes.ASM9) {
+                        @Override
+                        void visit(String ignored, Object value) {
+                            if (value instanceof Type) {
+                                targets << ((Type) value).internalName
+                            } else if (value != null) {
+                                targets << value.toString().replace('.', '/')
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        @Override
+        MethodVisitor visitMethod(int access, String name, String descriptor,
+                                 String signature, String[] exceptions) {
+            final Map handler = [name: name, descriptor: descriptor, kind: null, selector: null]
+            handlers << handler
+            return new MethodVisitor(Opcodes.ASM9) {
+                @Override
+                AnnotationVisitor visitAnnotation(String desc, boolean visible) {
+                    if (desc == INJECT_ANNOTATION) {
+                        handler.kind = "inject"
+                        return new AnnotationVisitor(Opcodes.ASM9) {
+                            @Override
+                            void visit(String key, Object value) {
+                                if (key == "method") handler.selector = value.toString()
+                            }
+
+                            @Override
+                            AnnotationVisitor visitArray(String key) {
+                                if (key != "method") return null
+                                return new AnnotationVisitor(Opcodes.ASM9) {
+                                    @Override
+                                    void visit(String ignored, Object value) {
+                                        if (handler.selector == null) handler.selector = value.toString()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (desc == ACCESSOR_ANNOTATION) {
+                        handler.kind = "accessor"
+                        return new AnnotationVisitor(Opcodes.ASM9) {
+                            @Override
+                            void visit(String key, Object value) {
+                                if (key == "value") handler.selector = value.toString()
+                            }
+                        }
+                    }
+                    return null
+                }
+            }
+        }
+    }
+
+    private static class Members extends ClassVisitor {
+        final List<String> methods = []
+        final List<String> fields = []
+
+        Members() {
+            super(Opcodes.ASM9)
+        }
+
+        @Override
+        MethodVisitor visitMethod(int access, String name, String descriptor,
+                                  String signature, String[] exceptions) {
+            methods << (name + descriptor)
+            return null
+        }
+
+        @Override
+        FieldVisitor visitField(int access, String name, String descriptor,
+                                String signature, Object value) {
+            fields << (name + ":" + descriptor)
+            return null
+        }
+    }
+}
