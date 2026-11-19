@@ -35,7 +35,7 @@ loom {
     // Minecraft 26.x ships unobfuscated, so there are no mappings to apply and the refmap is
     // only kept for tooling that still looks for one.
     mixin {
-        defaultRefmapName = "mist-client.refmap.json"
+        defaultRefmapName = "veil-client.refmap.json"
     }
 }
 
@@ -98,7 +98,7 @@ tasks.register("verifyMixinTargets") {
     description = "Verifies every @Inject/@Accessor in the mixin config against the Minecraft jar."
     dependsOn tasks.named("classes")
 
-    def configFile = file("src/main/resources/mist-client.mixins.json")
+    def configFile = file("src/main/resources/veil-client.mixins.json")
     def classesDirProvider = layout.buildDirectory.dir("classes/java/main")
     def compilePath = configurations.compileClasspath
 
