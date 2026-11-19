@@ -6,18 +6,12 @@
   "client": [
     "BrandRetrieverMixin",
     "ClientInboundMixin",
-    "ClientInputAccessor",
     "ClientPlayNetworkHandlerMixin",
-    "FreecamCameraMixin",
-    "FreecamEntityMixin",
-    "FreecamInputMixin",
     "GameModeAttackMixin",
     "HudRenderMixin",
     "KeyInputMixin",
-    "MinecraftAccessor",
     "MinecraftClientMixin",
     "MouseInputMixin",
-    "PostEffectMixin",
     "SilentRotationMixin",
     "TelemetryManagerMixin"
   ],

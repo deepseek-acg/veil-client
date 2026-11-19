@@ -19,7 +19,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * mods, so it is dropped: a vanilla client registers nothing.
  *
  * <p>Everything else is posted as {@link PacketEvent.Send}, which is what a module cancels to
- * suppress a packet — the same hook NoFall-style modules use.
+ * suppress a packet it would otherwise let through.
  *
  * <p>26.3 note: the send method lives on {@code ClientCommonPacketListenerImpl}, the parent of
  * {@code ClientPacketListener}, not on the listener itself.

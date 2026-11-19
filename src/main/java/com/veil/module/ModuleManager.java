@@ -2,33 +2,9 @@
 // Holds and initializes all modules. Key-press dispatch lives here too.
 package com.veil.module;
 
-import com.veil.module.modules.combat.AimAssist;
 import com.veil.module.modules.combat.AnchorAura;
-import com.veil.module.modules.combat.AutoBed;
 import com.veil.module.modules.combat.AutoSafeAnchor;
-import com.veil.module.modules.combat.CriticalHit;
 import com.veil.module.modules.combat.CrystalAura;
-import com.veil.module.modules.combat.KillAura;
-import com.veil.module.modules.combat.PearlAim;
-import com.veil.module.modules.combat.Velocity;
-import com.veil.module.modules.movement.AntiVoid;
-import com.veil.module.modules.movement.AutoSprint;
-import com.veil.module.modules.movement.NoFall;
-import com.veil.module.modules.movement.Scaffold;
-import com.veil.module.modules.player.SmarterAutoTotem;
-import com.veil.module.modules.render.Freecam;
-import com.veil.module.modules.render.Grayscale;
-import com.veil.module.modules.render.LogoutSpots;
-import com.veil.module.modules.render.PlayerESP;
-import com.veil.module.modules.render.Trajectories;
-import com.veil.module.modules.utility.AutoArmor;
-import com.veil.module.modules.utility.AutoEat;
-import com.veil.module.modules.utility.FastPlace;
-import com.veil.module.modules.misc.LogScrubber;
-import com.veil.module.modules.misc.ScreensharePanic;
-import com.veil.module.modules.world.OldChunks;
-import com.veil.module.modules.world.PlayerBlocks;
-import com.veil.module.modules.world.StashESP;
 
 import java.util.*;
 
@@ -40,33 +16,11 @@ public class ModuleManager {
         // Called once from Veil. A second call would register a second copy of every module, and
         // then a keybind press would toggle both copies.
         if (!modules.isEmpty()) return;
+        // Veil carries the crystal and anchor stack only; everything else in the client is the
+        // support those three need (settings, HUD, GUI), not a module of its own.
         register(new CrystalAura());
-        register(new KillAura());
-        register(new AimAssist());
-        register(new Velocity());
-        register(new AutoSprint());
-        register(new NoFall());
-        register(new Scaffold());
-        register(new CriticalHit());
-        register(new AutoBed());
         register(new AutoSafeAnchor());
         register(new AnchorAura());
-        register(new PearlAim());
-        register(new AntiVoid());
-        register(new FastPlace());
-        register(new AutoArmor());
-        register(new AutoEat());
-        register(new SmarterAutoTotem());
-        register(new PlayerESP());
-        register(new Grayscale());
-        register(new StashESP());
-        register(new PlayerBlocks());
-        register(new OldChunks());
-        register(new LogoutSpots());
-        register(new Freecam());
-        register(new Trajectories());
-        register(new ScreensharePanic());
-        register(new LogScrubber());
     }
 
     public static void register(Module module) {

@@ -302,9 +302,9 @@ public final class ClickGUI extends Screen {
      * Lays out a mode's option buttons in rows no wider than {@link #INNER_W}.
      *
      * <p>Each button is sized to its label, and a row's spare width is shared out so every row ends
-     * flush with the drawer. A mode with many or long options (the server profiles, PearlAim's target
-     * priorities) wraps onto further rows instead of squeezing every label into a sliver of the
-     * width, which is what used to make the labels run into each other.
+     * flush with the drawer. A mode with many or long options (the server profiles) wraps onto
+     * further rows instead of squeezing every label into a sliver of the width, which is what used
+     * to make the labels run into each other.
      */
     private static List<ModeButton> modeButtons(Font font, ModeSetting mode) {
         List<ModeButton> out = new ArrayList<>();

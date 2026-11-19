@@ -47,7 +47,7 @@ public enum ServerProfile {
         return this == HYPIXEL;
     }
 
-    /** Whether CriticalHit's StatusOnly spoof is safe (Intave detects it reliably). */
+    /** Whether a status-only crit spoof is safe here (Intave detects it reliably). */
     public boolean critSpoofSafe() {
         return this != INTAVE;
     }

@@ -338,9 +338,9 @@ public final class CrystalAura extends Module {
                 && Veil.mc.player.getMainHandItem().is(ItemTags.SWORDS)) {
             lastHit   = p;
             lastHitMs = System.currentTimeMillis();
-            // A second hit inside the same window must not restart the answer to the first. KillAura
-            // hits far faster than a place-and-break takes, and preempting on every hit would keep
-            // throwing away the cycle that is already placing and popping at that opponent, so
+            // A second hit inside the same window must not restart the answer to the first. Sword
+            // hits land far faster than a place-and-break takes, and preempting on every hit would
+            // keep throwing away the cycle that is already placing and popping at that opponent, so
             // nothing would ever finish.
             if (!answering(p)) preemptForKnockup();
         }
@@ -793,6 +793,9 @@ public final class CrystalAura extends Module {
      * knockup window, Use Existing, the skip list and the damage tolerance are what decide whether a
      * crystal is really on its way.
      */
+    /** Who the running cycle is aimed at, or null when there is no cycle. Read by the target HUD. */
+    public Player target() { return target; }
+
     public double plannedDamageAgainst(Player target) {
         LocalPlayer self = Veil.mc.player;
         if (self == null || target == null || Veil.mc.level == null || !isEnabled()) return 0;

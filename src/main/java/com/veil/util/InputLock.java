@@ -11,10 +11,9 @@ import com.veil.module.ModuleManager;
  * presses are not delivered to module keybinds, and the mouse mixin drops movement, button and
  * scroll input so the cursor cannot be moved and nothing can be clicked.
  *
- * <p>This exists for actions that drive the player's own inventory — {@code SmarterAutoTotem} opens
- * the inventory, clicks a slot and closes it. Anything else acting during that window competes with
- * it: another module attacking interrupts the click sequence, and a stray mouse click moves or drops
- * the stack the module is about to swap.
+ * <p>This exists for actions that drive the player's own inventory — open it, click a slot, close it.
+ * Anything else acting during that window competes with it: another module attacking interrupts the
+ * click sequence, and a stray mouse click moves or drops the stack about to be swapped.
  *
  * <p>The hold expires on its own after {@link #MAX_HOLD_MS}. A module that fails to release (an
  * exception mid-refill, a screen closed in a way the phase machine did not see) would otherwise
