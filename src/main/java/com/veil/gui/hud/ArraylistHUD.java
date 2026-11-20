@@ -47,8 +47,8 @@ public final class ArraylistHUD {
     /** Vanilla's status effect icons: 24px squares, harmful ones on a second row 26px lower. */
     private static final int EFFECT_ICON = 24;
     private static final int EFFECT_ROW  = 26;
-    // Matches the ClickGUI: dark rows with a teal accent bar, so the HUD and the menu read as one
-    // theme.
+    // Matches the ClickGUI: dark rows with the theme accent on the left edge, so the HUD and the
+    // menu read as one theme.
     private static final int BG_ALPHA = 0x8C0B0B0E;
     private static final int TEXT     = 0xFFEEEEFF;
     private static final int TEXT_DIM = 0xFF8A8A99;
