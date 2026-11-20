@@ -7,7 +7,7 @@ public final class ColorTheme {
         TEAL, ROSE, VIOLET, GOLD, FROST
     }
 
-    private static Theme current = Theme.TEAL;
+    private static Theme current = Theme.VIOLET;
 
     public static Theme get() { return current; }
     public static void set(Theme t) { current = t; }
