@@ -26,10 +26,12 @@ import java.util.Map;
  * The Veil GUI: a frosted sheet over the world, the wordmark, one search field and a card per
  * module. Clicking a card opens that module's settings; clicking its switch toggles it.
  *
- * <p>Blur is vanilla's, not ours: {@link #extractBlurredBackground} is the same hook the pause and
- * options screens use, so the world frosts exactly as much as the player's Menu Background
- * Blurriness setting asks for, including not at all. That replaces the post-effect pass the old
- * Grayscale module used to need — no shader ships with this screen.
+ * <p>Blur is vanilla's, not ours, and it is not ours to ask for twice: {@code Screen} calls
+ * {@link #extractBlurredBackground} for every screen before {@link #extractRenderState} runs, so the
+ * world frosts exactly as much as the player's Menu Background Blurriness setting asks for, including
+ * not at all. The render state admits one blur per frame — a second request throws
+ * "Can only blur once per frame" — so this screen must not call the hook itself; it only lays its
+ * wash over what vanilla already frosted. No shader ships with it.
  *
  * <p>26.3 note: Screen#render is gone; drawing goes through GuiGraphicsExtractor in
  * extractRenderState, and screen input takes {@link MouseButtonEvent} records because
@@ -544,9 +546,11 @@ public final class ClickGUI extends Screen {
 
         layout();
 
-        // Vanilla's menu blur, then our own violet wash over it. The blur applies to everything
-        // drawn before this stratum — the world and the HUD — which is exactly the screen behind us.
-        extractBlurredBackground(ctx);
+        // Vanilla already blurred the world for this frame, whatever its Blurriness setting says:
+        // extractRenderStateWithTooltipAndSubtitles calls extractBackground, which calls
+        // extractBlurredBackground, before it calls this method. Requesting the blur again here is
+        // what threw "Can only blur once per frame" the moment the GUI opened. Only the wash is
+        // ours, and it lands in the stratum the base screen opened above the frosted world.
         ctx.fillGradient(0, 0, width, height, WASH_TOP, WASH_BOTTOM);
 
         float fade = Anim.easeOutCubic(Anim.progress(openedAt, FADE_MS, now));
