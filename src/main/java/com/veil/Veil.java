@@ -83,10 +83,10 @@ public class Veil implements ClientModInitializer {
      * Macro Mode is read from the keyboard's own state every tick, not from key events.
      *
      * <p>{@code KeyInputMixin} drops key events while a module holds {@link com.veil.util.InputLock},
-     * and {@code SmarterAutoTotem} takes that lock during a fight — precisely when a macro key is
-     * being pressed. A macro module therefore cannot rely on having seen the press that arms it, so
-     * the key is polled here instead. A screen open means the keyboard is not game input any more, so
-     * holding a letter in chat only counts as "not holding" and never arms or disarms a module.
+     * which an inventory-driving action takes — precisely when a macro key is being pressed. A macro
+     * module therefore cannot rely on having seen the press that arms it, so the key is polled here
+     * instead. A screen open means the keyboard is not game input any more, so holding a letter in
+     * chat only counts as "not holding" and never arms or disarms a module.
      */
     @EventHandler
     private void onTick(TickEvent.Pre event) {

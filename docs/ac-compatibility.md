@@ -7,6 +7,8 @@ An earlier version of this file graded each check against named anticheats and l
 notes". That content was removed: none of it was testable here — there was no game client, no
 server and no anticheat to measure against — so the verdicts were guesses presented as results.
 
+Veil ships three modules — `CrystalAura`, `AutoSafeAnchor` and `AnchorAura` — and nothing else.
+
 ---
 
 ## What is actually verified
@@ -22,15 +24,6 @@ first", not as a description of behaviour you have seen.
 
 ## Combat
 
-### KillAura
-
-Attacks the nearest living entity within the configured reach, respecting the vanilla attack
-cooldown, at a rate drawn from a Gaussian around the configured CPS range.
-
-Limits: reach is a client-side check, so the client will swing at whatever it picks even if the
-player has no line of sight; the aim setting turns the camera. A target held from the previous tick
-is kept for 500 ms to avoid flicker, which can mean attacking something already out of range.
-
 ### CrystalAura
 
 Alternates between breaking an End Crystal near the target and placing a new one on a base block
@@ -41,23 +34,6 @@ Limits: the damage estimate is a simple distance falloff, not vanilla's explosio
 scores are approximate. Aim is delivered by rewriting the outbound movement packet, which is
 unverified in game; with rotation disabled the camera moves instead. Placing is skipped while a
 crystal the module placed is still unbroken for longer than the configured age.
-
-### CriticalHit
-
-Sends a movement packet reporting the player as airborne before an attack lands, then restores
-ground state, on a jittered interval and optionally only while the attack key is held.
-
-Limits: this sends movement packets that disagree with the client's real position, which is exactly
-the kind of inconsistency that server-side movement checks are built to notice. Treat it as the
-riskiest module in the client.
-
-### AutoBed
-
-Finds a bed near the target, aims at it, and sends start/stop destroy actions a tick apart, on a
-jittered delay.
-
-Limits: the two action packets go out back to back, which assumes the server treats instant-mine
-the way vanilla does. Block reach is not re-checked against the target after aiming.
 
 ### AutoSafeAnchor
 
@@ -98,9 +74,8 @@ the spot to be in reach with a clickable support.
 
 ### AnchorAura and CrystalAura together
 
-Both auras can be enabled at once, and neither pauses the other: `InputLock` is only taken by
-inventory-driving modules such as `SmarterAutoTotem`. Each keeps its own cycle on the same tick —
-`AnchorAura` runs the anchor sequence while `CrystalAura` places obsidian and crystals.
+Both auras can be enabled at once, and neither pauses the other. Each keeps its own cycle on the same
+tick — `AnchorAura` runs the anchor sequence while `CrystalAura` places obsidian and crystals.
 
 What they do share is the hotbar and the silent rotation:
 
@@ -118,120 +93,23 @@ Limits: the two are not aware of each other's blocks or explosions. A crystal de
 anchor destroys it, which ends that anchor sequence early (it re-arms and tries again), and both
 estimate damage against the same opponent without counting the other's blast.
 
-### Velocity
-
-Cancels the server's knockback packet and re-applies it scaled per axis.
-
-Limits: the re-applied motion ignores the collision context vanilla would have used; with a
-multiplier far from 1.0 the player's movement can visibly disagree with the server's simulation.
-
-## Movement
-
-### AutoSprint
-
-Sends the start-sprint command while the player is moving with enough food, rate limited to one
-packet per 250 ms.
-
-Limits: it does not loop sprint (vanilla keeps sprinting through turns); if the server refuses the
-sprint, the client shows sprinting while the server does not.
-
-### Scaffold
-
-Places a block underneath the player when airborne and moving, switching to a hotbar block if
-needed, and briefly forcing the sneak state around the placement call.
-
-Limits: the sneak state is toggled on the client to bypass vanilla's own requirement, which the
-server does not necessarily agree with. There is no placement-rate limit beyond one per tick.
-
-### NoFall
-
-Cancels outbound movement packets while falling faster than the threshold and re-sends an equivalent
-packet reporting the player as grounded.
-
-Limits: it rewrites the ground flag on the packets a server uses to reconstruct fall distance, so
-the reported state contradicts the client's actual position over time.
-
-### AntiVoid
-
-Places a water bucket under the player when the client detects a long fall, then restores the
-previous slot.
-
-Limits: reacts to client-side fall state, so on a lagging connection it may fire late; the slot swap
-and restore happen within a couple of ticks.
-
-## Player
-
-### SmarterAutoTotem
-
-Puts a totem in the offhand when one is missing, on a reaction delay picked at random between the
-configured min and max for every refill, minus a configurable share of the reported ping. In Smart
-mode it only swaps when the offhand is empty or health (health plus absorption) is at or below the
-threshold; in Strict mode it keeps the offhand filled. Totems are taken from the main inventory
-before the hotbar unless that is switched off. Below the instant-health threshold the delay is
-skipped.
-
-With Open Inventory on it opens the player's own inventory, clicks the totem, and closes it again,
-waiting a random pause between each step. For as long as that inventory is open it holds the client's
-input lock: every other module stops receiving events, module keybinds do not fire, and mouse
-movement, buttons and scroll are dropped, so the game's cursor cannot move and nothing can be
-clicked, dragged or scrolled mid-swap. That lock expires by itself after five seconds in case the
-module fails to release it. With Open Inventory off it sends a single offhand swap click and closes
-immediately, because a server treats an inventory click as an opened menu and will not accept
-movement until a close arrives.
-
-Limits: the ping share is a tuning value, not a measurement — a shorter delay for a slow connection
-assumes the click is simply late, which is not verified. Closing the inventory also re-asserts the
-held keys because opening a screen releases them; if the module is disabled mid-refill it closes the
-inventory it opened. Nothing here has been run in game.
-
-## Utility
-
-### FastPlace
-
-Clears `Minecraft#rightClickDelay` every tick so the client-side use-item throttle does not gate
-placement.
-
-Limits: it only removes the client's own delay. Any placement rate the server enforces is unaffected,
-so the visible result is placements the server rejects rather than faster building.
-
-### AutoArmor
-
-Quick-moves the strongest armor of each slot from the inventory into the armor slots, comparing the
-armor attribute each item contributes to that slot.
-
-Limits: it acts on the player's own inventory menu with shift-click semantics; the inventory-to-menu
-slot translation is derived from vanilla's menu layout, and a different open container would not
-work. Rate limited to one attempted swap per second.
-
-### AutoEat
-
-Switches to the most nutritious food in the hotbar when hunger is below the threshold, uses it, and
-waits out the eat animation before restoring the previous slot.
-
-Limits: the 32-tick wait is a fixed guess at the animation length; a food with a longer use duration
-would be interrupted, and the slot restore does not check that the food actually finished.
-
 ## Client behaviour
 
 - **Anti-fingerprint**: the brand string is reported as vanilla, mod channel registration payloads
   are dropped, and Mojang telemetry is disabled. These are client-side only and change what the
   client reports about itself, not what it does.
-- **Silent rotation**: `CrystalAura`, `AutoBed`, `AutoSafeAnchor` and `AnchorAura` can report a
-  rotation to the server by rewriting the outbound movement packet while the camera stays put.
-  Position-only packets are promoted to position-and-rotation, per-tick deltas are capped, and the
-  queued rotation is flushed as a rotation-only packet before the action instead of waiting for a
-  tick.
+- **Silent rotation**: `CrystalAura`, `AutoSafeAnchor` and `AnchorAura` can report a rotation to the
+  server by rewriting the outbound movement packet while the camera stays put. Position-only packets
+  are promoted to position-and-rotation, per-tick deltas are capped, and the queued rotation is
+  flushed as a rotation-only packet before the action instead of waiting for a tick.
 - **Keybinds**: each module has a Bind row at the top of its settings drawer. Click it and press a key
   to bind, right-click (or press Backspace while listening) to clear. The bound key is shown on the
   module row. Binds are stored as the scancode the key event carries, so they follow the physical
   key, not the keyboard layout's character.
 - **Persistence**: module on/off state, keybinds and every setting are written to
   `config/veil-client.json` and restored at startup. A value that no longer matches its setting type
-  or range is skipped and the default is kept; the rest of the file still loads.
-- **Pausing under input lock**: while a module holds `InputLock` (currently `SmarterAutoTotem`),
-  events are not delivered to other modules, and their `onPause()` runs: `CrystalAura` abandons its
-  cycle and puts the slot back, `KillAura` drops its target lock, `AutoBed` drops the bed. Timers are
-  reset rather than resumed, because a freeze of unknown length leaves them stale.
+  or range is skipped and the default is kept; the rest of the file still loads. Entries for modules
+  this build does not have are ignored on load and dropped on the next save.
 
 ---
 

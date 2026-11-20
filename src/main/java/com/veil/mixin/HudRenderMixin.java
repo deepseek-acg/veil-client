@@ -2,7 +2,6 @@ package com.veil.mixin;
 
 import com.veil.Veil;
 import com.veil.event.events.HudRenderEvent;
-import com.veil.gui.hud.Legend;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.Hud;
@@ -23,8 +22,6 @@ public class HudRenderMixin {
     @Inject(method = "extractRenderState", at = @At("TAIL"))
     private void onRenderPost(GuiGraphicsExtractor ctx, DeltaTracker deltaTracker, CallbackInfo ci) {
         if (Veil.mc == null) return;
-        // Panels that stack in a corner start from that corner once per frame.
-        Legend.beginFrame();
         Veil.EVENTS.post(new HudRenderEvent(ctx));
     }
 }

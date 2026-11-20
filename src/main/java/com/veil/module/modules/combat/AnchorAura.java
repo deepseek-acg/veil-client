@@ -247,6 +247,9 @@ public final class AnchorAura extends AutoSafeAnchor {
     }
 
     /** The closest living player inside Target Range, other than you. */
+    /** Who the running sequence is aimed at, or null when there is none. Read by the target HUD. */
+    public Player target() { return target; }
+
     private Player findOpponent() {
         LocalPlayer self = Veil.mc.player;
         Player best = null;

@@ -1,7 +1,5 @@
 package com.veil.gui;
 
-import com.veil.Veil;
-import com.veil.module.Category;
 import com.veil.module.Module;
 import com.veil.module.ModuleManager;
 import com.veil.setting.BoolSetting;
@@ -10,7 +8,6 @@ import com.veil.setting.IntSetting;
 import com.veil.setting.ModeSetting;
 import com.veil.setting.Setting;
 import com.mojang.blaze3d.platform.InputConstants;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
@@ -20,171 +17,186 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 import java.util.ArrayList;
-import java.util.EnumMap;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
 
 /**
- * The Veil GUI: a category menu on the left and one floating panel per category, in the style of the
- * old Vape click GUI. Left-click a module to toggle it, right-click to open its settings.
+ * The Veil GUI: a frosted sheet over the world, the wordmark, one search field and a card per
+ * module. Clicking a card opens that module's settings; clicking its switch toggles it.
+ *
+ * <p>Blur is vanilla's, not ours: {@link #extractBlurredBackground} is the same hook the pause and
+ * options screens use, so the world frosts exactly as much as the player's Menu Background
+ * Blurriness setting asks for, including not at all. That replaces the post-effect pass the old
+ * Grayscale module used to need — no shader ships with this screen.
  *
  * <p>26.3 note: Screen#render is gone; drawing goes through GuiGraphicsExtractor in
  * extractRenderState, and screen input takes {@link MouseButtonEvent} records because
- * {@code GuiEventListener} declares {@code mouseClicked(MouseButtonEvent, boolean)}. The old
- * {@code (double, double, int)} methods were replaced outright, not overloaded, so the record form
- * is the only implementation that receives clicks.
+ * {@code GuiEventListener} declares {@code mouseClicked(MouseButtonEvent, boolean)}.
  *
- * <p>Animation note: every eased value here is driven by wall-clock time through {@link Anim}, not
- * by a frame counter, and every animated value is read by both the renderer and the hit tests. A
- * drawer that is drawn half open is only half clickable, so what the cursor can reach always matches
- * what is on screen.
- *
- * <p>Layout note: every piece of text that shares a row with something else is measured and
- * shortened with {@link #ellipsize} to the space left beside it, so a long setting name, key name,
- * suffix or mode option is cut with ".." instead of running into its neighbour. The layout helpers
- * ({@link #modeButtons}, {@link #rowHeight}, {@link #intZone}) are shared by the renderer and the
- * hit tests for the same reason the animations are.
+ * <p>Layout note: both views are measured once per frame — cards into {@link #cards}, settings
+ * rows into {@link #sheetRows} — and the renderer and the hit tests read those same records. What
+ * the cursor can reach therefore cannot drift from what is drawn, and a mode's wrapped buttons are
+ * measured once instead of once per reader. Each region scrolls inside a clip that its hit tests
+ * use too.
  */
 public final class ClickGUI extends Screen {
 
-    // ── palette (delegated to ColorTheme) ─────────────────────────────────────
-    private static final int DIM        = ColorTheme.DIM;
-    private static final int MENU_BG    = ColorTheme.MENU_BG;
-    private static final int MENU_HDR   = ColorTheme.MENU_HDR;
-    private static final int PANEL_BG   = ColorTheme.PANEL_BG;
-    private static final int PANEL_TOP  = ColorTheme.PANEL_TOP;
-    private static final int ROW_OFF    = ColorTheme.ROW_OFF;
-    private static final int ROW_HOVER  = ColorTheme.ROW_HOVER;
-    private static final int TEXT_ON    = ColorTheme.TEXT_ON;
-    private static final int TEXT_OFF   = ColorTheme.TEXT_OFF;
-    private static final int TEXT_DIM   = ColorTheme.TEXT_DIM;
-    private static final int SEPARATOR  = ColorTheme.SEPARATOR;
-    private static final int DRAWER_BG  = ColorTheme.DRAWER_BG;
-    private static final int WIDGET_BG  = ColorTheme.WIDGET_BG;
-    private static final int KNOB_OFF   = ColorTheme.KNOB_OFF;
-    private static final int BORDER     = ColorTheme.BORDER;
-    private static final int SHADOW     = ColorTheme.SHADOW;
-    private static final int TOOLTIP_BG = ColorTheme.TOOLTIP_BG;
-    /** Secondary text on an enabled (accent-filled) module row. */
-    private static final int TEXT_ON_META = 0xCCFFFFFF;
-
     // ── geometry ──────────────────────────────────────────────────────────────
-    private static final int MENU_W     = 88;
-    private static final int MENU_HDR_H = 18;
-    private static final int PANEL_W    = 120;
-    private static final int PANEL_HDR  = 16;
-    private static final int PANEL_GAP  = 6;
-    private static final int ROW_H      = 16;
-    private static final int SEARCH_H   = 14;
-    private static final int SET_ROW    = 14;
-    private static final int SLIDE_ROW  = 22;
-    /** Module rows are inset this far from the panel's sides; the right gutter holds the scrollbar. */
-    private static final int ROW_INSET  = 4;
-    /** Width of a module row and of its settings drawer. */
-    private static final int CONTENT_W  = PANEL_W - 2 * ROW_INSET;
-    /** Text inside a row starts this far from the row's left edge... */
-    private static final int PAD_L      = 6;
-    /** ...and ends this far from its right edge. */
-    private static final int PAD_R      = 5;
-    /** Width available to a slider bar or a row of mode buttons. */
-    private static final int INNER_W    = CONTENT_W - 2 * PAD_L;
-    /** Mode settings: the name line, then rows of option buttons that wrap when they run out of room. */
-    private static final int MODE_LABEL_H = 13;
+    private static final int MARGIN = 16;
+    private static final int LINE = 10;
+    /** Glyph height of the default font; used to centre text in a row. */
+    private static final int GLYPH_H = 7;
+
+    private static final int CARD_W     = 232;
+    private static final int CARD_H     = 96;
+    private static final int CARD_GAP   = 12;
+    private static final int CARD_R     = 12;
+    /** Text inset inside a card, and the gap between a card's switch and its edge. */
+    private static final int CARD_PAD   = 14;
+
+    private static final int SEARCH_W_MAX = 360;
+    private static final int SEARCH_H     = 24;
+    private static final int SEARCH_R     = 12;
+    private static final int SEARCH_PAD   = 12;
+    /** Width of the "x" that clears the search, reachable from the field's right edge. */
+    private static final int SEARCH_CLEAR = 18;
+
+    private static final int SHEET_W_MAX  = 420;
+    private static final int SHEET_R      = 12;
+    private static final int SHEET_PAD    = 14;
+    /** Height of the sheet's fixed header; the scissored body starts here. */
+    private static final int SHEET_HEADER = 34;
+    /** How far a hovered row reaches past the text inset, on each side. */
+    private static final int ROW_INSET    = 6;
+
+    private static final int SET_ROW      = 16;
+    private static final int SLIDE_ROW    = 24;
+    private static final int MODE_LABEL_H = 11;
     private static final int MODE_BTN_H   = 11;
-    private static final int MODE_BTN_GAP = 2;
-    private static final int MODE_BTN_PAD = 6;
+    private static final int MODE_BTN_GAP = 3;
+    private static final int MODE_BTN_PAD = 10;
     private static final int MODE_BOTTOM  = 3;
-    /** Glyph height of the default font without its line gap; used to centre text in a row. */
-    private static final int GLYPH_H      = 7;
-    private static final int TOOLTIP_W    = 150;
-    private static final long TOOLTIP_DELAY_MS = 450L;
+
+    private static final int SWITCH_W = 26;
+    private static final int SWITCH_H = 12;
+    private static final int SWITCH_PAD = 2;
+    private static final int SWITCH_KNOB = SWITCH_H - 2 * SWITCH_PAD;
+    /** How far the knob travels inside its track, so it sits {@link #SWITCH_PAD} in at either end. */
+    private static final int SWITCH_TRAVEL = SWITCH_W - SWITCH_KNOB - 2 * SWITCH_PAD;
+    /** Top of a card's switch, relative to the card. */
+    private static final int SWITCH_DY = 11;
+
+    private static final int WORD_SCALE = 3;
+    private static final int WORD_GAP   = 5;
+
+    private static final int DOT     = 6;
+    private static final int DOT_GAP = 8;
+    /** Half-width of a theme dot's click target, in each direction. */
+    private static final int DOT_HIT = 4;
+    private static final int FOOTER_PAD = 12;
+
+    // ── palette ───────────────────────────────────────────────────────────────
+    /** Violet wash over the blurred world: top fades in, bottom settles nearly opaque. */
+    private static final int WASH_TOP    = 0x66170F2E;
+    private static final int WASH_BOTTOM = 0xC80A0714;
+    private static final int CARD_BG     = 0x18FFFFFF;
+    private static final int CARD_BG_ON  = 0x26FFFFFF;
+    private static final int CARD_LINE   = 0x1CFFFFFF;
+    private static final int CARD_LINE_ON= 0x55FFFFFF;
+    private static final int SHEET_BG    = 0xE80F0A1C;
+    private static final int SHEET_LINE  = 0x33FFFFFF;
+    private static final int SEARCH_BG   = 0x1AFFFFFF;
+    private static final int SEARCH_LINE = 0x2AFFFFFF;
+    private static final int SEARCH_LINE_HOT = 0x44FFFFFF;
+    private static final int MODE_BTN_BG = 0x1AFFFFFF;
+    private static final int CHIP_BG     = 0x1AFFFFFF;
+    private static final int DOT_OFF     = 0x44FFFFFF;
+    private static final int LINE_SOFT   = 0x1AFFFFFF;
+    private static final int TITLE       = 0xFFFFFFFF;
+    private static final int SUB         = 0xFFC9BFDD;
+    private static final int DIM         = 0xFF9185AE;
+    private static final int FAINT       = 0xFF6A6080;
+    private static final int TRACK       = 0x33FFFFFF;
+    private static final int KNOB        = 0xFFFFFFFF;
+    private static final int HOVER       = 0x1AFFFFFF;
 
     // ── animation ─────────────────────────────────────────────────────────────
-    /** How long the backdrop takes to reach full dim. */
-    private static final long FADE_MS = 140L;
-    /** Hover easing: roughly how many times a second the remaining difference is closed. */
+    private static final long FADE_MS = 160L;
     private static final float HOVER_RATE = 18f;
-    /** Drawer easing, per second. */
-    private static final float DRAWER_RATE = 30f;
-    private static final float SLIDE_RATE = 14f;
 
-    /**
-     * Hover key for a module's bind row. Each drawer has its own: a single shared key made two open
-     * drawers fight over one hover value every frame, so neither bind row could highlight properly.
-     */
-    private record BindRow(Module module) {}
+    private static final ColorTheme.Theme[] THEMES = ColorTheme.Theme.values();
+    /** Animation key for the bind row; identity, so it never collides with a module or setting. */
+    private static final Object BIND_ROW = new Object();
 
-    /** Hover key for one option button of a mode setting. */
-    private record ModeOption(ModeSetting setting, String option) {}
+    /** One module's card, in screen coordinates for the frame it was laid out for. */
+    private record Card(Module module, int x, int y, int w, int h) {
 
-    /** One option button of a mode setting, relative to the top-left of the button area. */
-    private record ModeButton(String option, int x, int y, int w) {}
+        int toggleX() { return x + w - CARD_PAD - SWITCH_W; }
+        int toggleY() { return y + SWITCH_DY; }
 
-    /** One floating category panel. Positions are remembered across openings. */
-    private static final class Panel {
-        final Category category;
-        int x, y, scroll;
-
-        Panel(Category category) { this.category = category; }
+        boolean onToggle(int mx, int my) {
+            return inside(mx, my, toggleX(), toggleY(), SWITCH_W, SWITCH_H);
+        }
     }
 
-    private final Map<Category, Panel> panels = new EnumMap<>(Category.class);
-    private final Set<Category> shown = new HashSet<>();
-    private final Set<Module> open = new HashSet<>();
-    /** Draw order of the panels, back to front. A panel that is clicked moves to the front. */
-    private final List<Category> zOrder = new ArrayList<>(List.of(Category.values()));
+    /** One option button of a mode setting, relative to the settings column. */
+    private record ModeButton(String option, int x, int y, int w) {}
 
-    private int menuX = -1, menuY = 20;
-    private boolean laidOut;
-    private boolean draggingMenu, draggingPanel;
-    private Panel draggedPanel;
-    private int dragOffX, dragOffY;
-    private FloatSetting draggingSlider;
-    private Panel sliderPanel;
-    private String search = "";
-    /** Module waiting for a key press to bind, or null when nothing is being bound. */
-    private Module bindingModule;
+    /** Animation key for one option button, so equal option text in two modes stays apart. */
+    private record OptionKey(ModeSetting setting, String option) {}
+
     /**
-     * When a key press was last used up as a bind. A letter key is followed by a character event
-     * for the same press, which would otherwise land in the search box right after being bound.
+     * One interactive row of the settings sheet. Its geometry is measured once per frame in
+     * {@link #layout()}; {@code y} is absolute by the time the renderer or a hit test reads it.
      */
+    private static final class SheetRow {
+        final Setting<?> setting;
+        final int h;
+        final List<ModeButton> buttons;
+        /** Left edge of an int setting's "◂ n ▸" readout, or -1 for settings without one. */
+        final int valueX;
+        int y;
+
+        SheetRow(Setting<?> setting, int y, int h, List<ModeButton> buttons, int valueX) {
+            this.setting = setting;
+            this.y = y;
+            this.h = h;
+            this.buttons = buttons;
+            this.valueX = valueX;
+        }
+    }
+
+    private String search = "";
+    /** Module whose settings sheet is open, or null while the cards are showing. */
+    private Module selected;
+    /** Module waiting for a key press to bind, or null when nothing is being bound. */
+    private Module binding;
+    /** When a key press was last used up as a bind; see {@link #charTyped}. */
     private long bindConsumedAt;
 
-    /** When this screen was opened, for the backdrop fade. */
     private long openedAt;
-    /** Previous frame's timestamp; 0 until the first frame of an opening. */
     private long lastFrameNs;
-    /** Smoothed hover amount per row, keyed by the category, module or setting the row draws. */
-    private final Map<Object, Float> hoverAnim = new HashMap<>();
-    /** Smoothed drawer opening per module: 0 closed, 1 fully open. */
-    private final Map<Module, Float> drawerAnim = new HashMap<>();
-    /** Smoothed value per widget, so toggles glide and sliders follow instead of jumping. */
-    private final Map<Object, Float> valueAnim = new HashMap<>();
-    /** Per-module flash on enable: 1 when toggled on, decays to 0. */
-    private final Map<Module, Float> pulseAnim = new HashMap<>();
-    /** Slide-in progress for the menu, 0=hidden 1=fully in. Reset on each open. */
-    private float menuSlide = 0f;
-    /** Per-panel slide-in progress. Reset on each open. */
-    private final Map<Category, Float> panelSlide = new EnumMap<>(Category.class);
 
-    /** What the tooltip currently describes, and since when the cursor has rested on it. */
-    private Object tipKey;
-    private long tipSince;
-    /** Tooltip requested by this frame's rows; drawn last so it sits on top of everything. */
-    private Object frameTipKey;
-    private String frameTipText;
+    private final Map<Object, Float> hoverAnim = new HashMap<>();
+    private final Map<Object, Float> valueAnim = new HashMap<>();
+
+    private FloatSetting draggingSlider;
+    private int dragBarX, dragBarW;
+
+    private float cardScroll, sheetScroll;
+
+    // per-frame layout, shared by the renderer and the hit tests
+    private final List<Card> cards = new ArrayList<>();
+    private final List<SheetRow> sheetRows = new ArrayList<>();
+    /** The open module's description, wrapped to the sheet's two lines. */
+    private List<String> sheetDesc = List.of();
+    private int markTop, subY, searchX, searchY, searchW, cardsTop, cardsViewH, cardsContentH;
+    private int sheetX, sheetY, sheetW, sheetH, sheetContentH, bindRowY;
 
     public ClickGUI() {
         super(Component.empty());
-        for (Category c : Category.values()) {
-            shown.add(c);
-            panels.put(c, new Panel(c));
-        }
     }
 
     @Override
@@ -192,25 +204,12 @@ public final class ClickGUI extends Screen {
         // init() runs on every open (and on resize), which is exactly when the fade should replay.
         openedAt = System.nanoTime();
         lastFrameNs = 0L;
-        menuSlide = 0f;
-        tipKey = null;
-        for (Category c : Category.values()) panelSlide.put(c, 0f);
-        if (menuX < 0) {
-            menuX = 8;
-            menuY = 20;
-        }
-        menuX = Math.max(0, Math.min(width - MENU_W, menuX));
-        menuY = Math.max(0, Math.min(height - MENU_HDR_H, menuY));
-        if (!laidOut) {
-            layoutPanels();
-            laidOut = true;
-        }
-        for (Panel p : panels.values()) {
-            p.x = Math.max(0, Math.min(width - PANEL_W, p.x));
-            // Leave the header and at least one row on screen; a panel dragged to the bottom edge
-            // would otherwise keep every row below the window with no way to scroll to them.
-            p.y = Math.max(0, Math.min(height - PANEL_HDR - ROW_H, p.y));
-        }
+        cardScroll = 0f;
+        sheetScroll = 0f;
+        draggingSlider = null;
+        selected = null;
+        binding = null;
+        layout();
     }
 
     @Override
@@ -218,103 +217,140 @@ public final class ClickGUI extends Screen {
 
     // ── layout ────────────────────────────────────────────────────────────────
 
-    /** Packs the panels left to right from the menu, wrapping to a new row when they run out of room. */
-    private void layoutPanels() {
-        int startX = menuX + MENU_W + PANEL_GAP;
-        int x = startX, y = 20, rowH = 0;
-        for (Category c : Category.values()) {
-            Panel p = panels.get(c);
-            int h = panelFullHeight(p);
-            if (x + PANEL_W > width - 4 && x > startX) {
-                x = startX;
-                y += rowH + PANEL_GAP;
-                rowH = 0;
-            }
-            p.x = x;
-            p.y = y;
-            rowH = Math.max(rowH, h);
-            x += PANEL_W + PANEL_GAP;
-        }
-    }
-
-    /**
-     * Display name for a bound key.
-     *
-     * <p>Binds are stored as the SDL scancode the key events carry, so the label comes from
-     * {@link InputConstants.Type#KEYBOARD} rather than from the raw number. An unknown code falls
-     * back to the number so a stale config entry is visible instead of blank.
-     */
-    private static String keyLabel(int key) {
-        if (key == Module.UNBOUND) return "none";
-        try {
-            return InputConstants.Type.KEYBOARD.getOrCreate(key).getDisplayName().getString();
-        } catch (RuntimeException error) {
-            return String.valueOf(key);
-        }
-    }
-
-    private static String menuLabel(Category c) {
-        return switch (c) {
-            case COMBAT   -> "Combat";
-            case MOVEMENT -> "Movement";
-            case RENDER   -> "Render";
-            case WORLD    -> "World";
-            case PLAYER   -> "Player";
-            case UTILITY  -> "Utility";
-            case MISC     -> "Misc";
-        };
-    }
-
-    private List<Module> modules(Category c) {
+    /** Shown modules, in registration order, after the search filter. */
+    private List<Module> visible() {
         String q = search.toLowerCase(Locale.ROOT);
-        return ModuleManager.getByCategory(c).stream()
-                .filter(m -> q.isEmpty() || m.getName().toLowerCase(Locale.ROOT).contains(q))
-                .toList();
-    }
-
-    /** Shown, non-empty panels in draw order (back to front). */
-    private List<Panel> visiblePanels() {
-        List<Panel> out = new ArrayList<>();
-        for (Category c : zOrder) {
-            Panel p = panels.get(c);
-            if (shown.contains(c) && !modules(c).isEmpty()) out.add(p);
+        List<Module> out = new ArrayList<>();
+        for (Module m : ModuleManager.getModules()) {
+            if (q.isEmpty() || m.getName().toLowerCase(Locale.ROOT).contains(q)) out.add(m);
         }
         return out;
     }
 
-    private void bringToFront(Panel p) {
-        zOrder.remove(p.category);
-        zOrder.add(p.category);
-    }
+    private void layout() {
+        int wordH = GLYPH_H * WORD_SCALE + 6;
+        searchW = Math.min(SEARCH_W_MAX, width - 2 * MARGIN);
+        searchX = (width - searchW) / 2;
 
-    /** The front-most panel under the cursor, or null when the cursor is not over any panel. */
-    private Panel panelAt(List<Panel> list, int mx, int my) {
-        for (int i = list.size() - 1; i >= 0; i--) {
-            Panel p = list.get(i);
-            if (inside(mx, my, p.x, p.y, PANEL_W, panelViewHeight(p))) return p;
+        cards.clear();
+        List<Module> shown = visible();
+        int cols = Math.max(1, Math.min(3, (width - 2 * MARGIN + CARD_GAP) / (CARD_W + CARD_GAP)));
+        int cardW = Math.min(CARD_W, (width - 2 * MARGIN - (cols - 1) * CARD_GAP) / cols);
+        int rows = Math.max(1, (shown.size() + cols - 1) / cols);
+        cardsContentH = rows * CARD_H + (rows - 1) * CARD_GAP;
+
+        // The wordmark, the search field and one row of cards are laid out as one block and
+        // centred together. When the cards need more height than the screen leaves, the block
+        // starts at the top and the cards scroll rather than being pushed off the bottom edge.
+        int chrome = wordH + 6 + LINE + 14 + SEARCH_H + 20;
+        cardsViewH = Math.min(cardsContentH, Math.max(CARD_H, height - chrome - 28));
+        markTop = Math.max(10, (height - (chrome + cardsViewH)) / 2);
+        subY = markTop + wordH + 6;
+        searchY = subY + LINE + 14;
+        cardsTop = searchY + SEARCH_H + 20;
+        cardScroll = Math.max(0f, Math.min(cardScrollMax(), cardScroll));
+
+        int totalW = cols * cardW + (cols - 1) * CARD_GAP;
+        int startX = (width - totalW) / 2;
+        int scroll = Math.round(cardScroll);
+
+        for (int i = 0; i < shown.size(); i++) {
+            int col = i % cols, row = i / cols;
+            cards.add(new Card(shown.get(i),
+                    startX + col * (cardW + CARD_GAP),
+                    cardsTop + row * (CARD_H + CARD_GAP) - scroll,
+                    cardW, CARD_H));
         }
-        return null;
-    }
 
-    private static Font font() { return Minecraft.getInstance().font; }
+        if (selected != null) layoutSheet(selected);
+    }
 
     /**
-     * Lays out a mode's option buttons in rows no wider than {@link #INNER_W}.
-     *
-     * <p>Each button is sized to its label, and a row's spare width is shared out so every row ends
-     * flush with the drawer. A mode with many or long options (the server profiles, PearlAim's target
-     * priorities) wraps onto further rows instead of squeezing every label into a sliver of the
-     * width, which is what used to make the labels run into each other.
+     * Measures the open sheet body. The settings are walked once at body-relative heights so the
+     * content height is known, the scroll is clamped against it, and then every row is shifted to
+     * where this frame draws it — after which the renderer and the hit tests agree by construction.
      */
-    private static List<ModeButton> modeButtons(Font font, ModeSetting mode) {
+    private void layoutSheet(Module module) {
+        sheetW = Math.min(SHEET_W_MAX, width - 2 * MARGIN);
+        sheetX = (width - sheetW) / 2;
+        sheetDesc = describe(font, module.getDescription(), innerW(), 2);
+        int bodyTop = SHEET_HEADER + sheetDesc.size() * LINE + 6;
+
+        int y = bodyTop + SET_ROW + 4;
+        sheetRows.clear();
+        for (Setting<?> s : module.getSettings()) {
+            SheetRow row = sheetRow(s, y);
+            sheetRows.add(row);
+            y += row.h;
+        }
+        sheetContentH = y + 10;
+        sheetH = Math.min(sheetContentH, height - 2 * MARGIN);
+        sheetY = Math.max(MARGIN, (height - sheetH) / 2);
+        sheetScroll = Math.max(0f, Math.min(Math.max(0, sheetContentH - sheetH), sheetScroll));
+
+        int offset = sheetY + bodyTop - Math.round(sheetScroll);
+        bindRowY = offset;
+        for (SheetRow row : sheetRows) row.y += offset;
+    }
+
+    /** Measures one settings row, including any mode buttons it has to wrap. */
+    private SheetRow sheetRow(Setting<?> s, int top) {
+        if (s instanceof FloatSetting) {
+            return new SheetRow(s, top, SLIDE_ROW, List.of(), -1);
+        }
+        if (s instanceof IntSetting in) {
+            return new SheetRow(s, top, SET_ROW, List.of(), sheetRight() - font.width(intLabel(in)));
+        }
+        if (s instanceof ModeSetting mode) {
+            List<ModeButton> buttons = modeButtons(mode);
+            int rows = buttons.isEmpty() ? 1
+                    : buttons.get(buttons.size() - 1).y() / (MODE_BTN_H + MODE_BTN_GAP) + 1;
+            int h = MODE_LABEL_H + rows * MODE_BTN_H + (rows - 1) * MODE_BTN_GAP + MODE_BOTTOM;
+            return new SheetRow(s, top, h, buttons, -1);
+        }
+        // Bool, and any future single-line setting.
+        return new SheetRow(s, top, SET_ROW, List.of(), -1);
+    }
+
+    private int cardScrollMax() {
+        return Math.max(0, cardsContentH - cardsViewH);
+    }
+
+    // ── sheet geometry ────────────────────────────────────────────────────────
+
+    private int innerW() { return sheetW - 2 * SHEET_PAD; }
+    private int sheetLeft() { return sheetX + SHEET_PAD; }
+    private int sheetRight() { return sheetX + sheetW - SHEET_PAD; }
+
+    private int rowX() { return sheetLeft() - ROW_INSET; }
+    private int rowW() { return sheetW - 2 * (SHEET_PAD - ROW_INSET); }
+
+    /** Whether a point is inside a sheet row, cut by the scrolling body's clip. */
+    private boolean overRow(int mx, int my, int y, int h) {
+        return insideClipped(mx, my, rowX(), y, rowW(), h, sheetY + SHEET_HEADER, sheetY + sheetH - 1);
+    }
+
+    /** The "&lt;" glyph that goes back to the cards. */
+    private boolean backHit(int mx, int my) {
+        return inside(mx, my, sheetLeft() - 4, sheetY + 6, 18, 18);
+    }
+
+    /** The "x" glyph that closes the sheet. */
+    private boolean closeHit(int mx, int my) {
+        return inside(mx, my, sheetRight() - 14, sheetY + 6, 18, 18);
+    }
+
+    /** Wraps a mode's options into as many evenly stretched rows as the column needs. */
+    private List<ModeButton> modeButtons(ModeSetting mode) {
+        int inner = innerW();
         List<ModeButton> out = new ArrayList<>();
         List<String> row = new ArrayList<>();
         List<Integer> widths = new ArrayList<>();
         int used = 0, y = 0;
         for (String opt : mode.getOptions()) {
-            int w = Math.min(INNER_W, font.width(opt) + MODE_BTN_PAD);
-            if (!row.isEmpty() && used + MODE_BTN_GAP + w > INNER_W) {
-                flushModeRow(out, row, widths, used, y);
+            int w = Math.min(inner, font.width(opt) + MODE_BTN_PAD);
+            if (!row.isEmpty() && used + MODE_BTN_GAP + w > inner) {
+                flushModeRow(out, row, widths, used, y, inner);
                 y += MODE_BTN_H + MODE_BTN_GAP;
                 row.clear();
                 widths.clear();
@@ -324,14 +360,14 @@ public final class ClickGUI extends Screen {
             row.add(opt);
             widths.add(w);
         }
-        if (!row.isEmpty()) flushModeRow(out, row, widths, used, y);
+        if (!row.isEmpty()) flushModeRow(out, row, widths, used, y, inner);
         return out;
     }
 
     private static void flushModeRow(List<ModeButton> out, List<String> row, List<Integer> widths,
-                                     int used, int y) {
+                                     int used, int y, int inner) {
         int n = row.size();
-        int extra = Math.max(0, INNER_W - used);
+        int extra = Math.max(0, inner - used);
         int x = 0;
         for (int i = 0; i < n; i++) {
             int w = widths.get(i) + extra / n + (i < extra % n ? 1 : 0);
@@ -340,88 +376,13 @@ public final class ClickGUI extends Screen {
         }
     }
 
-    private static int modeHeight(ModeSetting mode) {
-        List<ModeButton> buttons = modeButtons(font(), mode);
-        int rows = buttons.isEmpty() ? 1 : buttons.get(buttons.size() - 1).y() / (MODE_BTN_H + MODE_BTN_GAP) + 1;
-        return MODE_LABEL_H + rows * MODE_BTN_H + (rows - 1) * MODE_BTN_GAP + MODE_BOTTOM;
-    }
-
-    private static int rowHeight(Setting<?> s) {
-        if (s instanceof FloatSetting) return SLIDE_ROW;
-        if (s instanceof ModeSetting mode) return modeHeight(mode);
-        return SET_ROW;
-    }
-
-    /** Height of a settings drawer laid out fully open, including the padding under its last row. */
-    private int drawerFullHeight(Module m) {
-        int h = 2 + SET_ROW;
-        for (Setting<?> s : m.getSettings()) h += rowHeight(s);
-        return h;
-    }
-
-    /**
-     * The drawer height currently being drawn.
-     *
-     * <p>Rows are always laid out at their full-open offsets and the drawer is clipped to this
-     * height, so opening looks like the drawer sliding out from under the module row rather than the
-     * rows being squashed. The value is 0 while closed, which is what lets the rows below it close
-     * the gap smoothly instead of jumping.
-     */
-    private int drawerHeight(Module m) {
-        float progress = drawerAnim.getOrDefault(m, 0f);
-        if (progress <= 0.001f) return 0;
-        if (progress >= 0.999f) return drawerFullHeight(m);
-        return Math.round(drawerFullHeight(m) * progress);
-    }
-
-    /** Body height: 2px of padding above the first row and below the last. */
-    private int panelBodyHeight(Panel p) {
-        int h = 4;
-        for (Module m : modules(p.category)) {
-            h += ROW_H;
-            h += drawerHeight(m);
-        }
-        return h;
-    }
-
-    private int panelFullHeight(Panel p) { return PANEL_HDR + panelBodyHeight(p); }
-
-    /** Visible height: the panel is clipped to the screen, and scrolls when its content is taller. */
-    private int panelViewHeight(Panel p) {
-        return Math.max(PANEL_HDR + ROW_H, Math.min(panelFullHeight(p), height - p.y - 2));
-    }
-
-    private int maxScroll(Panel p) {
-        return Math.max(0, panelFullHeight(p) - panelViewHeight(p));
-    }
-
-    /** The scroll offset the renderer is using, so hit-testing cannot disagree with what is drawn. */
-    private int scrollOf(Panel p) {
-        return Math.max(0, Math.min(maxScroll(p), p.scroll));
-    }
-
-    private int menuHeight() {
-        return MENU_HDR_H + 3 + SEARCH_H + 4 + Category.values().length * ROW_H + 4;
-    }
-
-    /** Top of the first category row; shared by the renderer and the click handler. */
-    private int menuRowsTop() {
-        return menuY + MENU_HDR_H + 3 + SEARCH_H + 4;
-    }
-
     // ── text helpers ──────────────────────────────────────────────────────────
 
-    /** The y at which text sits vertically centred in a row starting at {@code top}. */
     private static int centerY(int top, int h) {
         return top + (h - GLYPH_H) / 2;
     }
 
-    /**
-     * Shortens {@code text} with a trailing ".." until it fits in {@code maxWidth} pixels.
-     *
-     * <p>Never cuts between a section sign and its formatting code: a dangling {@code §} would turn
-     * the dots into a formatting code and leave the label visibly broken.
-     */
+    /** Shortens {@code text} with a trailing ".." until it fits in {@code maxWidth} pixels. */
     private static String ellipsize(Font font, String text, int maxWidth) {
         if (text == null || text.isEmpty()) return "";
         if (font.width(text) <= maxWidth) return text;
@@ -454,6 +415,19 @@ public final class ClickGUI extends Screen {
     }
 
     /**
+     * Wraps to at most {@code maxLines} lines. When the text was cut, the last visible line is the
+     * remainder of the paragraph ellipsized, so it ends in a single ".." rather than a bare stop.
+     */
+    private static List<String> describe(Font font, String text, int maxWidth, int maxLines) {
+        List<String> lines = wrap(font, text, maxWidth);
+        if (lines.size() <= maxLines) return lines;
+        List<String> out = new ArrayList<>(lines.subList(0, maxLines));
+        out.set(maxLines - 1,
+                ellipsize(font, String.join(" ", lines.subList(maxLines - 1, lines.size())), maxWidth));
+        return out;
+    }
+
+    /**
      * Readout for a slider. Wide ranges drop decimals that would only add noise ("3000" rather than
      * "3000.00"), which also keeps the value from crowding out the setting name.
      */
@@ -463,33 +437,389 @@ public final class ClickGUI extends Screen {
         return String.format(Locale.ROOT, pattern, f.get());
     }
 
-    private static String intLabel(IntSetting setting) {
-        return "◂ " + setting.get() + " ▸";
+    /** The stepper readout of an int setting; also the widest its row ever has to reserve. */
+    private String intLabel(IntSetting in) {
+        return "◂ " + in.get() + " ▸";
     }
 
-    private static void outline(GuiGraphicsExtractor ctx, int x, int y, int w, int h, int color) {
-        ctx.fill(x, y, x + w, y + 1, color);
-        ctx.fill(x, y + h - 1, x + w, y + h, color);
-        ctx.fill(x, y + 1, x + 1, y + h - 1, color);
-        ctx.fill(x + w - 1, y + 1, x + w, y + h - 1, color);
+    /** The plain value a card previews for a setting; the sheet has richer editors for the same. */
+    private static String valueLabel(Setting<?> s) {
+        return switch (s) {
+            case FloatSetting f -> formatFloat(f);
+            case IntSetting in -> String.valueOf(in.get());
+            case ModeSetting mode -> mode.get();
+            case BoolSetting b -> b.get() ? "on" : "off";
+            default -> "";
+        };
     }
 
-    /** Asks for a tooltip this frame. The first request wins, which is the front-most element. */
-    private void requestTip(Object key, String text) {
-        if (frameTipKey != null || text == null || text.isBlank()) return;
-        frameTipKey = key;
-        frameTipText = text;
+    private static String keyLabel(int key) {
+        if (key == Module.UNBOUND) return "none";
+        try {
+            return InputConstants.Type.KEYBOARD.getOrCreate(key).getDisplayName().getString();
+        } catch (RuntimeException error) {
+            return String.valueOf(key);
+        }
+    }
+
+    // ── drawing primitives ────────────────────────────────────────────────────
+
+    /**
+     * A filled rounded rectangle, built from per-row spans at the corners and one fill through the
+     * middle. There is no rounded-rect primitive in the extractor, and a full row-per-pixel fill
+     * would be four times the quads for the same picture.
+     */
+    private static void roundRect(GuiGraphicsExtractor ctx, int x, int y, int w, int h, int r, int color) {
+        if (w <= 0 || h <= 0) return;
+        r = Math.max(0, Math.min(r, Math.min(w / 2, h / 2)));
+        if (r == 0) {
+            ctx.fill(x, y, x + w, y + h, color);
+            return;
+        }
+        for (int row = 0; row < r; row++) {
+            int dy = r - row - 1;
+            int inset = r - (int) Math.round(Math.sqrt((double) (r * r - dy * dy)));
+            ctx.fill(x + inset, y + row, x + w - inset, y + row + 1, color);
+            ctx.fill(x + inset, y + h - 1 - row, x + w - inset, y + h - row, color);
+        }
+        ctx.fill(x, y + r, x + w, y + h - r, color);
+    }
+
+    /** A rounded panel: fill with a 1px frame of {@code line} around it. */
+    private static void panel(GuiGraphicsExtractor ctx, int x, int y, int w, int h, int r, int fill, int line) {
+        roundRect(ctx, x, y, w, h, r, line);
+        roundRect(ctx, x + 1, y + 1, w - 2, h - 2, Math.max(0, r - 1), fill);
+    }
+
+    /**
+     * The wordmark: "veil" in the game font, scaled up and letter-spaced. The scale goes through the
+     * extractor's pose matrix because the bitmap font only draws at its own size; the baseline is
+     * divided back out so the caller still works in screen pixels.
+     */
+    private static void wordmark(GuiGraphicsExtractor ctx, Font font, int centerX, int top, int color) {
+        String word = "veil";
+        int width = 0;
+        for (int i = 0; i < word.length(); i++) {
+            width += font.width(String.valueOf(word.charAt(i)));
+            if (i < word.length() - 1) width += WORD_GAP;
+        }
+        float x = (centerX - (width * WORD_SCALE) / 2f) / WORD_SCALE;
+        float y = (float) top / WORD_SCALE;
+        var pose = ctx.pose();
+        pose.pushMatrix();
+        pose.scale((float) WORD_SCALE, (float) WORD_SCALE);
+        for (int i = 0; i < word.length(); i++) {
+            String glyph = String.valueOf(word.charAt(i));
+            ctx.text(font, glyph, Math.round(x), Math.round(y), color, false);
+            x += font.width(glyph) + WORD_GAP;
+        }
+        pose.popMatrix();
+    }
+
+    /** A small switch: track plus knob. {@code k} is the animated 0..1 position of the knob. */
+    private static void switchPill(GuiGraphicsExtractor ctx, int x, int y, float k) {
+        roundRect(ctx, x, y, SWITCH_W, SWITCH_H, SWITCH_H / 2, Anim.mix(TRACK, ColorTheme.accent(), k));
+        int knobX = x + SWITCH_PAD + Math.round(Anim.clamp01(k) * SWITCH_TRAVEL);
+        roundRect(ctx, knobX, y + SWITCH_PAD, SWITCH_KNOB, SWITCH_KNOB, SWITCH_KNOB / 2,
+                Anim.mix(KNOB, ColorTheme.knobOn(), k));
+    }
+
+    /** Slider track and knob for a float setting. */
+    private static void sliderBar(GuiGraphicsExtractor ctx, float fraction, int x, int y, int w) {
+        ctx.fill(x, y, x + w, y + 2, TRACK);
+        int fill = Math.round(w * Anim.clamp01(fraction));
+        if (fill > 0) ctx.fill(x, y, x + fill, y + 2, ColorTheme.accent());
+        int knobX = Math.max(x, Math.min(x + w - 3, x + fill - 1));
+        roundRect(ctx, knobX, y - 3, 4, 8, 2, KNOB);
+    }
+
+    // ── render ────────────────────────────────────────────────────────────────
+
+    @Override
+    public void extractRenderState(GuiGraphicsExtractor ctx, int mouseX, int mouseY, float partialTick) {
+        long now = System.nanoTime();
+        float dt = lastFrameNs == 0L ? 1f / 60f
+                : Math.min(0.1f, (now - lastFrameNs) / 1_000_000_000f);
+        lastFrameNs = now;
+
+        layout();
+
+        // Vanilla's menu blur, then our own violet wash over it. The blur applies to everything
+        // drawn before this stratum — the world and the HUD — which is exactly the screen behind us.
+        extractBlurredBackground(ctx);
+        ctx.fillGradient(0, 0, width, height, WASH_TOP, WASH_BOTTOM);
+
+        float fade = Anim.easeOutCubic(Anim.progress(openedAt, FADE_MS, now));
+
+        if (selected == null) {
+            drawBrand(ctx, fade);
+            drawCards(ctx, mouseX, mouseY, dt, fade);
+        } else {
+            drawSheet(ctx, mouseX, mouseY, dt, fade);
+        }
+        drawFooter(ctx, fade);
+    }
+
+    private void drawBrand(GuiGraphicsExtractor ctx, float fade) {
+        wordmark(ctx, font, width / 2, markTop, Anim.alpha(TITLE, fade));
+        String sub = "COMBAT  ·  " + enabledCount() + " OF " + ModuleManager.getModules().size() + " ON";
+        ctx.text(font, sub, (width - font.width(sub)) / 2, subY, Anim.alpha(DIM, fade), false);
+    }
+
+    private int enabledCount() {
+        int on = 0;
+        for (Module m : ModuleManager.getModules()) if (m.isEnabled()) on++;
+        return on;
+    }
+
+    private void drawCards(GuiGraphicsExtractor ctx, int mouseX, int mouseY, float dt, float fade) {
+        boolean searchLive = inside(mouseX, mouseY, searchX, searchY, searchW, SEARCH_H);
+        panel(ctx, searchX, searchY, searchW, SEARCH_H, SEARCH_R, SEARCH_BG,
+                search.isEmpty() ? (searchLive ? SEARCH_LINE_HOT : SEARCH_LINE) : ColorTheme.accentDim());
+
+        int textY = centerY(searchY, SEARCH_H);
+        int textLeft = searchX + SEARCH_PAD;
+        int textRight = searchX + searchW - SEARCH_PAD;
+        String shown = search;
+        if (!search.isEmpty()) {
+            boolean clearHover = inside(mouseX, mouseY, searchX + searchW - SEARCH_CLEAR, searchY,
+                    SEARCH_CLEAR, SEARCH_H);
+            ctx.text(font, "x", searchX + searchW - 15, textY - 1, clearHover ? TITLE : DIM, false);
+            textRight -= SEARCH_CLEAR;
+        }
+        // A long query is read from its tail: the caret marks where typing continues.
+        while (!shown.isEmpty() && font.width(shown) > textRight - textLeft - 2) {
+            shown = shown.substring(1);
+        }
+        if (search.isEmpty()) {
+            ctx.text(font, "Search modules", textLeft, textY, Anim.alpha(FAINT, fade), false);
+        } else {
+            ctx.text(font, shown, textLeft, textY, TITLE, false);
+        }
+        if (binding == null && (System.currentTimeMillis() / 500L) % 2 == 0) {
+            int caretX = textLeft + font.width(shown) + (search.isEmpty() ? -1 : 1);
+            ctx.fill(caretX, searchY + 7, caretX + 1, searchY + SEARCH_H - 7, ColorTheme.accent());
+        }
+
+        if (cards.isEmpty()) {
+            String note = "No modules match";
+            ctx.text(font, note, (width - font.width(note)) / 2, cardsTop + 8, DIM, false);
+            return;
+        }
+
+        int clipTop = cardsTop;
+        int clipBottom = cardsTop + cardsViewH;
+        ctx.enableScissor(0, clipTop, width, clipBottom);
+        for (Card card : cards) {
+            if (card.y() + card.h() < clipTop || card.y() > clipBottom) continue;
+            drawCard(ctx, card, mouseX, mouseY, dt);
+        }
+        ctx.disableScissor();
+
+        if (cardScrollMax() > 0) {
+            drawScrollBar(ctx, cardsTop, cardsViewH, cardsContentH, Math.round(cardScroll),
+                    cardScrollMax(), true);
+        }
+    }
+
+    private void drawCard(GuiGraphicsExtractor ctx, Card card, int mouseX, int mouseY, float dt) {
+        Module module = card.module();
+        boolean on = module.isEnabled();
+        float hv = hover(module, insideClipped(mouseX, mouseY, card.x(), card.y(), card.w(), card.h(),
+                cardsTop, cardsTop + cardsViewH), dt);
+
+        int line = Anim.mix(on ? CARD_LINE_ON : CARD_LINE, ColorTheme.accentDim(), hv * 0.8f);
+        if (on) line = Anim.mix(line, ColorTheme.accent(), 0.55f);
+        panel(ctx, card.x(), card.y(), card.w(), card.h(), CARD_R, on ? CARD_BG_ON : CARD_BG, line);
+        if (hv > 0.01f) {
+            roundRect(ctx, card.x(), card.y(), card.w(), card.h(), CARD_R, Anim.alpha(HOVER, hv * 0.6f));
+        }
+
+        int left = card.x() + CARD_PAD;
+        int right = card.x() + card.w() - CARD_PAD;
+
+        // Bound key sits just left of the switch, where it does not push the name around.
+        int nameRight = card.toggleX() - 6;
+        if (module.getKeybind() != Module.UNBOUND) {
+            String key = ellipsize(font, keyLabel(module.getKeybind()), 34);
+            int kw = font.width(key);
+            roundRect(ctx, nameRight - kw - 8, card.y() + 10, kw + 6, SWITCH_H, 3, CHIP_BG);
+            ctx.text(font, key, nameRight - 5 - kw, centerY(card.y() + 10, SWITCH_H), DIM, false);
+            nameRight -= kw + 12;
+        }
+        ctx.text(font, ellipsize(font, module.getName(), nameRight - left), left, card.y() + 12,
+                on ? TITLE : SUB, false);
+
+        switchPill(ctx, card.toggleX(), card.toggleY(), animateValue(module, on ? 1f : 0f, 22f, dt));
+
+        List<String> desc = describe(font, module.getDescription(), card.w() - 2 * CARD_PAD, 2);
+        for (int i = 0; i < desc.size(); i++) {
+            ctx.text(font, desc.get(i), left, card.y() + 26 + i * LINE, DIM, false);
+        }
+
+        // The two settings the module is tuned by most: value shown, edited in the sheet.
+        List<Setting<?>> settings = module.getSettings();
+        for (int i = 0; i < Math.min(2, settings.size()); i++) {
+            Setting<?> s = settings.get(i);
+            int rowY = card.y() + 50 + i * 20;
+            String value = valueLabel(s);
+            ctx.text(font, ellipsize(font, s.getName(), card.w() - 2 * CARD_PAD - font.width(value) - 8),
+                    left, rowY, SUB, false);
+            ctx.text(font, value, right - font.width(value), rowY, ColorTheme.accent(), false);
+            if (s instanceof FloatSetting f) {
+                sliderBar(ctx, f.getFraction(), left, rowY + 11, card.w() - 2 * CARD_PAD);
+            } else if (s instanceof BoolSetting b) {
+                switchPill(ctx, right - SWITCH_W, rowY + 2, animateValue(s, b.get() ? 1f : 0f, 22f, dt));
+            }
+        }
+    }
+
+    private void drawSheet(GuiGraphicsExtractor ctx, int mouseX, int mouseY, float dt, float fade) {
+        // The wordmark only has room above the sheet when the sheet is not using the whole screen.
+        if (sheetY >= 56) wordmark(ctx, font, width / 2, sheetY - 32, Anim.alpha(TITLE, fade * 0.9f));
+
+        panel(ctx, sheetX, sheetY, sheetW, sheetH, SHEET_R, SHEET_BG, SHEET_LINE);
+        // Violet hairline under the header, the one strong accent on the sheet.
+        ctx.fill(sheetX + 1, sheetY + SHEET_HEADER - 2, sheetX + sheetW - 1, sheetY + SHEET_HEADER - 1,
+                ColorTheme.accentDim());
+
+        ctx.text(font, "<", sheetLeft(), sheetY + 12, backHit(mouseX, mouseY) ? TITLE : DIM, false);
+        ctx.text(font, ellipsize(font, selected.getName(), innerW() - 40), sheetLeft() + 14, sheetY + 12,
+                TITLE, false);
+        ctx.text(font, "x", sheetRight() - 7, sheetY + 12, closeHit(mouseX, mouseY) ? TITLE : DIM, false);
+
+        // The header stays put; only the body scrolls, so the body is the only scissored part.
+        int clipTop = sheetY + SHEET_HEADER;
+        int clipBottom = sheetY + sheetH - 1;
+        ctx.enableScissor(sheetX + 1, clipTop, sheetX + sheetW - 1, clipBottom);
+
+        int descTop = clipTop - Math.round(sheetScroll);
+        for (int i = 0; i < sheetDesc.size(); i++) {
+            ctx.text(font, sheetDesc.get(i), sheetLeft(), descTop + i * LINE, DIM, false);
+        }
+
+        drawBindRow(ctx, mouseX, mouseY, dt);
+        for (SheetRow row : sheetRows) {
+            if (row.y + row.h <= clipTop || row.y >= clipBottom) continue;
+            drawRow(ctx, row, mouseX, mouseY, dt);
+        }
+
+        ctx.disableScissor();
+
+        if (sheetContentH > sheetH) {
+            drawScrollBar(ctx, clipTop, sheetH - SHEET_HEADER - 2, sheetContentH,
+                    Math.round(sheetScroll), sheetContentH - sheetH, false);
+        }
+    }
+
+    private void drawBindRow(GuiGraphicsExtractor ctx, int mouseX, int mouseY, float dt) {
+        float hv = hover(BIND_ROW, overRow(mouseX, mouseY, bindRowY, SET_ROW), dt);
+        if (hv > 0.01f) roundRect(ctx, rowX(), bindRowY, rowW(), SET_ROW, 6, Anim.alpha(HOVER, hv));
+
+        boolean listening = binding == selected;
+        int textY = centerY(bindRowY, SET_ROW);
+        ctx.text(font, "Bind", sheetLeft(), textY, Anim.mix(DIM, TITLE, hv), false);
+        String value = ellipsize(font, listening ? "press a key..." : keyLabel(selected.getKeybind()),
+                innerW() - font.width("Bind") - 12);
+        ctx.text(font, value, sheetRight() - font.width(value), textY,
+                listening ? ColorTheme.accent() : Anim.mix(FAINT, SUB, hv), false);
+    }
+
+    private void drawRow(GuiGraphicsExtractor ctx, SheetRow row, int mouseX, int mouseY, float dt) {
+        Setting<?> s = row.setting;
+        float hv = hover(s, overRow(mouseX, mouseY, row.y, row.h), dt);
+        if (hv > 0.01f) roundRect(ctx, rowX(), row.y, rowW(), row.h, 6, Anim.alpha(HOVER, hv));
+        int nameColor = Anim.mix(SUB, TITLE, hv);
+
+        if (s instanceof BoolSetting b) {
+            ctx.text(font, ellipsize(font, s.getName(), innerW() - SWITCH_W - 8), sheetLeft(),
+                    centerY(row.y, SET_ROW), nameColor, false);
+            switchPill(ctx, sheetRight() - SWITCH_W, row.y + 2,
+                    animateValue(s, b.get() ? 1f : 0f, 22f, dt));
+
+        } else if (s instanceof FloatSetting f) {
+            String value = formatFloat(f);
+            ctx.text(font, ellipsize(font, s.getName(), innerW() - font.width(value) - 10), sheetLeft(),
+                    row.y + 2, nameColor, false);
+            ctx.text(font, value, sheetRight() - font.width(value), row.y + 2, ColorTheme.accent(), false);
+            sliderBar(ctx, animateValue(s, f.getFraction(), 30f, dt), sheetLeft(), row.y + 14, innerW());
+
+        } else if (s instanceof IntSetting in) {
+            String value = intLabel(in);
+            ctx.text(font, ellipsize(font, s.getName(), innerW() - font.width(value) - 10), sheetLeft(),
+                    centerY(row.y, SET_ROW), nameColor, false);
+            ctx.text(font, value, row.valueX, centerY(row.y, SET_ROW), ColorTheme.accent(), false);
+
+        } else if (s instanceof ModeSetting mode) {
+            ctx.text(font, ellipsize(font, s.getName(), innerW()), sheetLeft(), row.y + 2, nameColor, false);
+            int btnTop = row.y + MODE_LABEL_H;
+            for (ModeButton btn : row.buttons) {
+                int bx = sheetLeft() + btn.x(), by = btnTop + btn.y();
+                boolean active = btn.option().equals(mode.get());
+                float bhov = hover(new OptionKey(mode, btn.option()), insideClipped(mouseX, mouseY, bx, by,
+                        btn.w(), MODE_BTN_H, sheetY + SHEET_HEADER, sheetY + sheetH - 1), dt);
+                roundRect(ctx, bx, by, btn.w(), MODE_BTN_H, 3,
+                        active ? ColorTheme.accent() : Anim.mix(MODE_BTN_BG, HOVER, bhov));
+                String label = ellipsize(font, btn.option(), btn.w() - 6);
+                ctx.text(font, label, bx + (btn.w() - font.width(label)) / 2, centerY(by, MODE_BTN_H),
+                        active ? ColorTheme.knobOn() : Anim.mix(DIM, TITLE, bhov), false);
+            }
+        }
+    }
+
+    /** A 2px scrollbar at the right edge of a scrolling region. */
+    private void drawScrollBar(GuiGraphicsExtractor ctx, int top, int viewH, int contentH,
+                               int scroll, int maxScroll, boolean atScreenEdge) {
+        if (maxScroll <= 0 || viewH <= 0) return;
+        int x = atScreenEdge ? width - 6 : sheetX + sheetW - 7;
+        int trackTop = top + 2, trackBottom = top + viewH - 2;
+        if (trackBottom - trackTop < 6) return;
+        int thumbH = Math.max(10, Math.round((trackBottom - trackTop) * (viewH / (float) contentH)));
+        int thumbY = trackTop + Math.round((trackBottom - trackTop - thumbH) * (scroll / (float) maxScroll));
+        ctx.fill(x, trackTop, x + 2, trackBottom, LINE_SOFT);
+        ctx.fill(x, thumbY, x + 2, thumbY + thumbH, ColorTheme.accentDim());
+    }
+
+    private void drawFooter(GuiGraphicsExtractor ctx, float fade) {
+        String hint = binding != null
+                ? "Binding " + binding.getName() + ": press a key  ·  Esc cancel  ·  Backspace clear"
+                : selected == null
+                    ? "Click a module to configure  ·  Left-click the switch to toggle"
+                    : "Esc back  ·  Scroll for more";
+        ctx.text(font, ellipsize(font, hint, dotX(0) - 24), 12, height - 16, Anim.alpha(FAINT, fade), false);
+        for (int i = 0; i < THEMES.length; i++) {
+            boolean active = THEMES[i] == ColorTheme.get();
+            roundRect(ctx, dotX(i), dotY(), DOT, DOT, DOT / 2, active ? ColorTheme.accent() : DOT_OFF);
+        }
+    }
+
+    // ── theme dots (one geometry for drawing and for clicking) ────────────────
+
+    private int dotsWidth() {
+        return THEMES.length * DOT + (THEMES.length - 1) * DOT_GAP;
+    }
+
+    private int dotX(int index) {
+        return width - FOOTER_PAD - dotsWidth() + index * (DOT + DOT_GAP);
+    }
+
+    private int dotY() {
+        return height - 15;
+    }
+
+    /** Index of the theme dot under the cursor, or -1. */
+    private int themeDotAt(int mx, int my) {
+        for (int i = 0; i < THEMES.length; i++) {
+            if (inside(mx, my, dotX(i) - DOT_HIT, dotY() - DOT_HIT,
+                    DOT + 2 * DOT_HIT, DOT + 2 * DOT_HIT)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     // ── animation helpers ─────────────────────────────────────────────────────
 
-    /** Eases this module's drawer toward its open or closed target. Called once per drawn frame. */
-    private void animateDrawer(Module m, float dt) {
-        float target = open.contains(m) ? 1f : 0f;
-        drawerAnim.put(m, Anim.approach(drawerAnim.getOrDefault(m, target), target, DRAWER_RATE, dt));
-    }
-
-    /** Eases one row's hover amount toward {@code hovered ? 1 : 0}. */
     private float hover(Object key, boolean hovered, float dt) {
         float target = hovered ? 1f : 0f;
         float value = Anim.approach(hoverAnim.getOrDefault(key, target), target, HOVER_RATE, dt);
@@ -497,432 +827,10 @@ public final class ClickGUI extends Screen {
         return value;
     }
 
-    /** Eases a widget's drawn value toward the value the setting actually holds. */
     private float animateValue(Object key, float target, float rate, float dt) {
         float value = Anim.approach(valueAnim.getOrDefault(key, target), target, rate, dt);
         valueAnim.put(key, value);
         return value;
-    }
-
-    // ── render ────────────────────────────────────────────────────────────────
-
-    @Override
-    public void extractRenderState(GuiGraphicsExtractor ctx, int mouseX, int mouseY, float partialTick) {
-        Font font = font();
-
-        long now = System.nanoTime();
-        float dt = lastFrameNs == 0L ? 1f / 60f
-                : Math.min(0.1f, (now - lastFrameNs) / 1_000_000_000f);
-        lastFrameNs = now;
-
-        // The world dims in behind the GUI instead of snapping dark, and the panels settle a beat
-        // later than the backdrop so the screen reads as opening rather than being pasted on.
-        float fade = Anim.easeOutCubic(Anim.progress(openedAt, FADE_MS, now));
-        ctx.fill(0, 0, width, height, Anim.alpha(DIM, fade));
-
-        menuSlide = Anim.approach(menuSlide, 1f, SLIDE_RATE, dt);
-        for (Category c : Category.values()) {
-            panelSlide.put(c, Anim.approach(panelSlide.getOrDefault(c, 0f), 1f, SLIDE_RATE, dt));
-        }
-
-        renderHint(ctx, font, fade);
-
-        // Only the front-most thing under the cursor reacts to it. Without this, a row in a panel
-        // that is covered by another panel (or the menu under a panel) lit up through the panel on
-        // top, so two overlapping rows highlighted at once.
-        boolean dragging = draggingMenu || draggingPanel || draggingSlider != null;
-        List<Panel> list = visiblePanels();
-        Panel top = dragging ? null : panelAt(list, mouseX, mouseY);
-        boolean menuLive = !dragging && top == null;
-
-        // At most one element receives the real cursor position, so at most one asks for a tooltip.
-        frameTipKey = null;
-        frameTipText = null;
-        renderMenu(ctx, font, menuLive ? mouseX : -1, menuLive ? mouseY : -1, dt);
-        for (Panel p : list) {
-            boolean live = p == top;
-            renderPanel(ctx, font, p, live ? mouseX : -1, live ? mouseY : -1, dt);
-        }
-
-        renderEmptySearch(ctx, font, list);
-        renderTooltip(ctx, font, mouseX, mouseY, dragging);
-    }
-
-    /** One line of controls along the bottom edge, or the bind prompt while a bind is pending. */
-    private void renderHint(GuiGraphicsExtractor ctx, Font font, float fade) {
-        String hint;
-        int color;
-        if (bindingModule != null) {
-            hint = "Binding " + bindingModule.getName() + ": press a key  ·  Esc cancel  ·  Backspace clear";
-            color = ColorTheme.accent();
-        } else {
-            hint = "Left-click toggle  ·  Right-click settings  ·  Type to search";
-            color = TEXT_DIM;
-        }
-        hint = ellipsize(font, hint, width - 8);
-        int x = (width - font.width(hint)) / 2;
-        ctx.text(font, hint, x, height - 11, Anim.alpha(color, fade), false);
-    }
-
-    private void renderMenu(GuiGraphicsExtractor ctx, Font font, int mouseX, int mouseY, float dt) {
-        int menuH = menuHeight();
-
-        float ms = Anim.easeOutCubic(menuSlide);
-        ctx.fill(menuX + 2, menuY + 2, menuX + MENU_W + 2, menuY + menuH + 2, Anim.alpha(SHADOW, ms));
-        ctx.fill(menuX, menuY, menuX + MENU_W, menuY + menuH, Anim.alpha(MENU_BG, ms));
-        ctx.fill(menuX, menuY, menuX + MENU_W, menuY + MENU_HDR_H, Anim.alpha(MENU_HDR, ms));
-        ctx.fill(menuX, menuY, menuX + 3, menuY + MENU_HDR_H, Anim.alpha(ColorTheme.accent(), ms));
-        ctx.fill(menuX, menuY + MENU_HDR_H - 1, menuX + MENU_W, menuY + MENU_HDR_H,
-                Anim.alpha(ColorTheme.accentDim(), ms));
-        int titleY = centerY(menuY, MENU_HDR_H - 1);
-        ctx.text(font, "VEIL", menuX + 8, titleY, TEXT_ON, false);
-
-        // Theme swatch: a small square of the accent, framed so it reads as a button.
-        boolean swatchHover = inside(mouseX, mouseY, menuX + MENU_W - 28, menuY + 2, 12, MENU_HDR_H - 4);
-        float sh = hover("swatch", swatchHover, dt);
-        int swX = menuX + MENU_W - 26, swY = menuY + 5;
-        outline(ctx, swX, swY, 8, 8, Anim.mix(BORDER, TEXT_OFF, sh));
-        ctx.fill(swX + 1, swY + 1, swX + 7, swY + 7, ColorTheme.accent());
-        if (swatchHover) requestTip("swatch", "Theme: " + ColorTheme.name() + " (click to cycle)");
-
-        boolean closeHover = inside(mouseX, mouseY, menuX + MENU_W - 14, menuY + 2, 12, MENU_HDR_H - 4);
-        float ch = hover("close", closeHover, dt);
-        ctx.text(font, "x", menuX + MENU_W - 11, titleY - 1, Anim.mix(TEXT_DIM, TEXT_ON, ch), false);
-        if (closeHover) requestTip("close", "Close (Esc)");
-
-        // Search field. Text that does not fit scrolls left so the end being typed stays visible.
-        int sx = menuX + 4, sy = menuY + MENU_HDR_H + 3, sw = MENU_W - 8;
-        ctx.fill(sx, sy, sx + sw, sy + SEARCH_H, DRAWER_BG);
-        outline(ctx, sx, sy, sw, SEARCH_H, search.isEmpty() ? BORDER : ColorTheme.accentDim());
-        int textY = centerY(sy, SEARCH_H);
-        int textRight = sx + sw - 4;
-        if (!search.isEmpty()) {
-            boolean clearHover = inside(mouseX, mouseY, sx + sw - 11, sy, 11, SEARCH_H);
-            ctx.text(font, "x", sx + sw - 8, textY - 1, clearHover ? TEXT_ON : TEXT_DIM, false);
-            textRight = sx + sw - 11;
-        }
-        int textLeft = sx + 4;
-        String shownSearch = search;
-        while (!shownSearch.isEmpty() && font.width(shownSearch) > textRight - textLeft - 2) {
-            shownSearch = shownSearch.substring(1);
-        }
-        if (search.isEmpty()) {
-            ctx.text(font, "Search...", textLeft, textY, TEXT_DIM, false);
-        } else {
-            ctx.text(font, shownSearch, textLeft, textY, TEXT_ON, false);
-        }
-        boolean caret = bindingModule == null && (System.currentTimeMillis() / 500L) % 2 == 0;
-        if (caret) {
-            int caretX = textLeft + font.width(shownSearch) + (search.isEmpty() ? -1 : 1);
-            ctx.fill(caretX, sy + 3, caretX + 1, sy + SEARCH_H - 3, ColorTheme.accent());
-        }
-
-        int cy = menuRowsTop();
-        for (Category c : Category.values()) {
-            boolean hovered = inside(mouseX, mouseY, menuX, cy, MENU_W, ROW_H);
-            boolean active = shown.contains(c);
-            boolean matches = search.isEmpty() || !modules(c).isEmpty();
-            float hv = hover(c, hovered, dt);
-            if (hv > 0.01f) {
-                ctx.fill(menuX + 1, cy, menuX + MENU_W - 1, cy + ROW_H, Anim.mix(MENU_BG, ROW_HOVER, hv));
-            }
-            if (active) ctx.fill(menuX, cy + 2, menuX + 2, cy + ROW_H - 2, ColorTheme.accent());
-
-            int labelColor = active ? TEXT_ON : Anim.mix(TEXT_DIM, TEXT_OFF, hv);
-            if (!matches) labelColor = Anim.alpha(labelColor, 0.45f);
-            int rowTextY = centerY(cy, ROW_H);
-
-            // Enabled-module count on the right, so a hidden category still shows it is doing work.
-            int right = menuX + MENU_W - 7;
-            int enabled = 0;
-            for (Module m : ModuleManager.getByCategory(c)) if (m.isEnabled()) enabled++;
-            if (enabled > 0) {
-                String count = String.valueOf(enabled);
-                right -= font.width(count);
-                ctx.text(font, count, right, rowTextY, active ? ColorTheme.accent() : ColorTheme.accentDim(), false);
-                right -= 4;
-            }
-            String label = ellipsize(font, menuLabel(c), right - (menuX + 9));
-            ctx.text(font, label, menuX + 9, rowTextY, labelColor, false);
-            cy += ROW_H;
-        }
-
-        outline(ctx, menuX, menuY, MENU_W, menuH, Anim.alpha(BORDER, ms));
-    }
-
-    /** A note under the menu when the search hides every module, instead of an empty screen. */
-    private void renderEmptySearch(GuiGraphicsExtractor ctx, Font font, List<Panel> list) {
-        if (search.isEmpty() || !list.isEmpty()) return;
-        String note = "No modules match";
-        int y = menuY + menuHeight() + 5;
-        if (y + 9 > height) y = menuY - 12;
-        ctx.text(font, note, menuX + (MENU_W - font.width(note)) / 2, y, TEXT_DIM, false);
-    }
-
-    private void renderPanel(GuiGraphicsExtractor ctx, Font font, Panel p, int mouseX, int mouseY, float dt) {
-        int viewH = panelViewHeight(p);
-        p.scroll = scrollOf(p);
-
-        float ps = Anim.easeOutCubic(panelSlide.getOrDefault(p.category, 1f));
-        ctx.fill(p.x + 2, p.y + 2, p.x + PANEL_W + 2, p.y + viewH + 2, Anim.alpha(SHADOW, ps));
-        ctx.fill(p.x, p.y, p.x + PANEL_W, p.y + viewH, Anim.alpha(PANEL_BG, ps));
-        ctx.fill(p.x, p.y, p.x + PANEL_W, p.y + PANEL_HDR, Anim.alpha(PANEL_TOP, ps));
-        ctx.fill(p.x, p.y + PANEL_HDR - 1, p.x + PANEL_W, p.y + PANEL_HDR, Anim.alpha(ColorTheme.accentDim(), ps));
-
-        // Header: category name on the left, enabled/total on the right.
-        List<Module> all = ModuleManager.getByCategory(p.category);
-        int enabled = 0;
-        for (Module m : all) if (m.isEnabled()) enabled++;
-        String count = enabled + "/" + all.size();
-        int countX = p.x + PANEL_W - 6 - font.width(count);
-        int hdrY = centerY(p.y, PANEL_HDR - 1);
-        ctx.text(font, count, countX, hdrY, enabled > 0 ? ColorTheme.accent() : TEXT_DIM, false);
-        ctx.text(font, ellipsize(font, menuLabel(p.category), countX - 4 - (p.x + 6)),
-                p.x + 6, hdrY, TEXT_ON, false);
-
-        int bodyTop = p.y + PANEL_HDR;
-        int bodyBottom = p.y + viewH;
-        ctx.enableScissor(p.x, bodyTop, p.x + PANEL_W, bodyBottom);
-
-        int cx = p.x + ROW_INSET, cw = CONTENT_W;
-        int cy = bodyTop + 2 - p.scroll;
-
-        for (Module m : modules(p.category)) {
-            boolean hovered = insideClipped(mouseX, mouseY, cx, cy, cw, ROW_H, bodyTop, bodyBottom);
-            boolean on = m.isEnabled();
-            boolean expanded = open.contains(m);
-            float hv = hover(m, hovered, dt);
-            if (hovered) requestTip(m, m.getDescription());
-
-            animateDrawer(m, dt);
-            int drawerH = drawerHeight(m);
-
-            ctx.fill(cx, cy, cx + cw, cy + ROW_H,
-                    on ? Anim.mix(ColorTheme.rowOn(), ColorTheme.rowOnHover(), hv) : Anim.mix(ROW_OFF, ROW_HOVER, hv));
-            ctx.fill(cx, cy + ROW_H - 1, cx + cw, cy + ROW_H, SEPARATOR);
-            float pulse = Anim.approach(pulseAnim.getOrDefault(m, 0f), 0f, 4f, dt);
-            pulseAnim.put(m, pulse);
-            if (pulse > 0.001f) ctx.fill(cx, cy, cx + cw, cy + ROW_H, Anim.alpha(ColorTheme.accent(), pulse * 0.4f));
-
-            renderModuleRow(ctx, font, m, cx, cy, cw, on, expanded);
-            cy += ROW_H;
-
-            if (drawerH > 0) {
-                cy = renderSettings(ctx, font, m, cx, cy, cw, mouseX, mouseY, p, viewH, drawerH, dt);
-            }
-        }
-
-        ctx.disableScissor();
-
-        // Scrollbar in the right gutter, which the rows never reach, so it cannot cover their text.
-        int max = maxScroll(p);
-        if (max > 0) {
-            int trackTop = bodyTop + 2, trackBottom = bodyBottom - 2;
-            int trackH = Math.max(1, trackBottom - trackTop);
-            int contentH = panelBodyHeight(p);
-            int thumbH = Math.max(8, Math.round(trackH * (float) (viewH - PANEL_HDR) / contentH));
-            int thumbY = trackTop + Math.round((trackH - thumbH) * (float) p.scroll / max);
-            int barX = p.x + PANEL_W - 3;
-            ctx.fill(barX, trackTop, barX + 2, trackBottom, WIDGET_BG);
-            ctx.fill(barX, thumbY, barX + 2, thumbY + thumbH, ColorTheme.accentDim());
-        }
-
-        outline(ctx, p.x, p.y, PANEL_W, viewH, Anim.alpha(BORDER, ps));
-    }
-
-    /**
-     * The text of one module row: name on the left; on the right, from the edge inwards, the
-     * settings arrow, the bound key and the suffix.
-     *
-     * <p>The name always keeps room for a few characters, the key is dropped if it cannot fit, and
-     * the suffix (often a target name, so of any length) gets whatever is left and is cut with "..".
-     * Previously a long suffix could push the name's space below zero, at which point the name was
-     * drawn uncut straight over the suffix.
-     */
-    private void renderModuleRow(GuiGraphicsExtractor ctx, Font font, Module m, int cx, int cy, int cw,
-                                 boolean on, boolean expanded) {
-        int left = cx + PAD_L;
-        int right = cx + cw - PAD_R;
-        int textY = centerY(cy, ROW_H - 1);
-        int meta = on ? TEXT_ON_META : TEXT_DIM;
-
-        // The arrow has a fixed slot on every row, so keys and suffixes line up down the panel.
-        int arrowSlot = 7;
-        if (!m.getSettings().isEmpty()) {
-            String arrow = expanded ? "▾" : "▸";
-            int ax = right - arrowSlot + (arrowSlot - font.width(arrow)) / 2;
-            ctx.text(font, arrow, ax, textY, on ? TEXT_ON : TEXT_DIM, false);
-        }
-        right -= arrowSlot + 3;
-
-        String name = m.getName();
-        int minName = Math.min(font.width(name), 46);
-        int budget = right - left - minName - 4;
-
-        if (m.getKeybind() != Module.UNBOUND) {
-            String key = keyLabel(m.getKeybind());
-            int kw = font.width(key);
-            if (kw + 4 <= budget) {
-                int kx = right - kw - 2;
-                ctx.fill(kx - 2, cy + 2, kx + kw + 2, cy + ROW_H - 3, on ? 0x33000000 : WIDGET_BG);
-                ctx.text(font, key, kx, textY, meta, false);
-                right = kx - 2 - 4;
-                budget -= kw + 4 + 4;
-            }
-        }
-
-        String suffix = m.suffix();
-        if (suffix != null && !suffix.isEmpty() && budget >= 14) {
-            String cut = ellipsize(font, suffix, budget);
-            if (!cut.isEmpty()) {
-                int sx = right - font.width(cut);
-                ctx.text(font, cut, sx, textY, meta, false);
-                right = sx - 4;
-            }
-        }
-
-        ctx.text(font, ellipsize(font, name, right - left), left, textY, on ? TEXT_ON : TEXT_OFF, false);
-    }
-
-    /**
-     * Draws a module's settings drawer, revealed to {@code drawerH}.
-     *
-     * <p>The clip is a nested scissor: vanilla's {@code GuiGraphicsExtractor} keeps a
-     * {@code ScissorStack}, so the panel's own clip is restored by the matching
-     * {@code disableScissor}.
-     */
-    private int renderSettings(GuiGraphicsExtractor ctx, Font font, Module m, int cx, int drawerTop,
-                               int cw, int mouseX, int mouseY, Panel panel, int viewH, int drawerH,
-                               float dt) {
-        int full = drawerFullHeight(m);
-        ctx.enableScissor(cx, drawerTop, cx + cw, drawerTop + drawerH);
-
-        ctx.fill(cx, drawerTop, cx + cw, drawerTop + full, DRAWER_BG);
-        ctx.fill(cx, drawerTop, cx + 2, drawerTop + full, ColorTheme.accentDim());
-
-        int top = panel.y + PANEL_HDR;
-        int limit = Math.min(panel.y + viewH, drawerTop + drawerH);
-        int left = cx + PAD_L;
-        int right = cx + cw - PAD_R;
-        int cy = drawerTop;
-
-        // Bind row: click to listen for a key, right-click to clear.
-        boolean bindHovered = insideClipped(mouseX, mouseY, cx, cy, cw, SET_ROW, top, limit);
-        float bindHover = hover(new BindRow(m), bindHovered, dt);
-        if (bindHovered) requestTip(new BindRow(m), "Click, then press a key. Right-click clears.");
-        if (bindHover > 0.01f) {
-            ctx.fill(cx + 2, cy, cx + cw, cy + SET_ROW, Anim.mix(0x00000000, ROW_HOVER, bindHover));
-        }
-        boolean listening = bindingModule == m;
-        int rowY = centerY(cy, SET_ROW);
-        String bindLabel = listening ? "press a key..." : keyLabel(m.getKeybind());
-        bindLabel = ellipsize(font, bindLabel, right - left - font.width("Bind") - 6);
-        ctx.text(font, "Bind", left, rowY, Anim.mix(TEXT_OFF, TEXT_ON, bindHover), false);
-        ctx.text(font, bindLabel, right - font.width(bindLabel), rowY,
-                listening ? ColorTheme.accent() : Anim.mix(TEXT_DIM, TEXT_OFF, bindHover), false);
-        cy += SET_ROW;
-
-        for (Setting<?> s : m.getSettings()) {
-            int h = rowHeight(s);
-            boolean rowHovered = insideClipped(mouseX, mouseY, cx, cy, cw, h, top, limit);
-            float hv = hover(s, rowHovered, dt);
-            if (hv > 0.01f) {
-                ctx.fill(cx + 2, cy, cx + cw, cy + h, Anim.mix(0x00000000, ROW_HOVER, hv));
-            }
-            int nameColor = Anim.mix(TEXT_OFF, TEXT_ON, hv);
-
-            if (s instanceof BoolSetting b) {
-                int pillW = 16, pillH = 8;
-                int pillX = right - pillW;
-                int pillY = cy + (SET_ROW - pillH) / 2;
-                String name = ellipsize(font, s.getName(), pillX - 4 - left);
-                if (rowHovered && !name.equals(s.getName())) requestTip(s, s.getName());
-                ctx.text(font, name, left, centerY(cy, SET_ROW), nameColor, false);
-                // The knob glides between the two ends instead of teleporting.
-                float k = animateValue(s, b.get() ? 1f : 0f, 22f, dt);
-                ctx.fill(pillX, pillY, pillX + pillW, pillY + pillH, Anim.mix(WIDGET_BG, ColorTheme.accent(), k));
-                int knobX = pillX + 1 + Math.round(k * (pillW - 8));
-                ctx.fill(knobX, pillY + 1, knobX + 6, pillY + pillH - 1, Anim.mix(KNOB_OFF, ColorTheme.knobOn(), k));
-
-            } else if (s instanceof FloatSetting f) {
-                String value = formatFloat(f);
-                int valueX = right - font.width(value);
-                String name = ellipsize(font, s.getName(), valueX - 5 - left);
-                if (rowHovered && !name.equals(s.getName())) requestTip(s, s.getName());
-                ctx.text(font, name, left, cy + 3, nameColor, false);
-                ctx.text(font, value, valueX, cy + 3, ColorTheme.accent(), false);
-
-                int barX = left, barW = INNER_W, barY = cy + 15;
-                ctx.fill(barX, barY, barX + barW, barY + 2, WIDGET_BG);
-                int fill = Math.round(barW * animateValue(s, f.getFraction(), 30f, dt));
-                if (fill > 0) ctx.fill(barX, barY, barX + fill, barY + 2, ColorTheme.accent());
-                int knobX = Math.max(barX, Math.min(barX + barW - 3, barX + fill - 1));
-                ctx.fill(knobX, barY - 2, knobX + 3, barY + 4, TEXT_ON);
-
-            } else if (s instanceof ModeSetting mode) {
-                ctx.text(font, ellipsize(font, s.getName(), right - left), left, cy + 3, nameColor, false);
-
-                int btnTop = cy + MODE_LABEL_H;
-                for (ModeButton btn : modeButtons(font, mode)) {
-                    int bx = left + btn.x(), by = btnTop + btn.y();
-                    boolean active = btn.option().equals(mode.get());
-                    boolean btnHovered = insideClipped(mouseX, mouseY, bx, by, btn.w(), MODE_BTN_H, top, limit);
-                    float bh = hover(new ModeOption(mode, btn.option()), btnHovered, dt);
-                    int bg = active ? ColorTheme.accent() : Anim.mix(WIDGET_BG, ROW_HOVER, bh);
-                    ctx.fill(bx, by, bx + btn.w(), by + MODE_BTN_H, bg);
-                    String label = ellipsize(font, btn.option(), btn.w() - 4);
-                    if (btnHovered && !label.equals(btn.option())) requestTip(new ModeOption(mode, btn.option()), btn.option());
-                    int tx = bx + (btn.w() - font.width(label)) / 2;
-                    int color = active ? ColorTheme.knobOn() : Anim.mix(TEXT_DIM, TEXT_ON, bh);
-                    ctx.text(font, label, tx, centerY(by, MODE_BTN_H) + 1, color, false);
-                }
-
-            } else if (s instanceof IntSetting i) {
-                String value = intLabel(i);
-                int valueX = right - font.width(value);
-                String name = ellipsize(font, s.getName(), valueX - 5 - left);
-                if (rowHovered && !name.equals(s.getName())) requestTip(s, s.getName());
-                ctx.text(font, name, left, centerY(cy, SET_ROW), nameColor, false);
-                ctx.text(font, value, valueX, centerY(cy, SET_ROW), ColorTheme.accent(), false);
-            }
-
-            cy += h;
-        }
-
-        ctx.disableScissor();
-        return drawerTop + drawerH;
-    }
-
-    /** Draws the tooltip requested this frame once the cursor has rested on its element. */
-    private void renderTooltip(GuiGraphicsExtractor ctx, Font font, int mouseX, int mouseY, boolean dragging) {
-        long now = System.currentTimeMillis();
-        if (!Objects.equals(frameTipKey, tipKey)) {
-            tipKey = frameTipKey;
-            tipSince = now;
-        }
-        if (dragging || bindingModule != null || frameTipKey == null) return;
-        if (now - tipSince < TOOLTIP_DELAY_MS) return;
-
-        List<String> lines = wrap(font, frameTipText, TOOLTIP_W);
-        if (lines.isEmpty()) return;
-        int w = 0;
-        for (String line : lines) w = Math.max(w, font.width(line));
-        w += 8;
-        int h = lines.size() * 10 + 5;
-
-        // Below-right of the cursor, flipped to the other side wherever it would leave the screen.
-        int x = mouseX + 10, y = mouseY + 6;
-        if (x + w > width - 2) x = mouseX - w - 6;
-        if (y + h > height - 2) y = mouseY - h - 4;
-        x = Math.max(2, Math.min(width - w - 2, x));
-        y = Math.max(2, Math.min(height - h - 2, y));
-
-        ctx.fill(x, y, x + w, y + h, TOOLTIP_BG);
-        outline(ctx, x, y, w, h, BORDER);
-        ctx.fill(x, y, x + 1, y + h, ColorTheme.accent());
-        for (int i = 0; i < lines.size(); i++) {
-            ctx.text(font, lines.get(i), x + 4, y + 3 + i * 10, TEXT_OFF, false);
-        }
     }
 
     // ── input ─────────────────────────────────────────────────────────────────
@@ -931,15 +839,6 @@ public final class ClickGUI extends Screen {
         return mx >= x && mx < x + w && my >= y && my < y + h;
     }
 
-    /**
-     * Hit test against the part of a row that is actually on screen.
-     *
-     * <p>Rows are drawn through a scissor, so a row scrolled under the panel header or past its
-     * bottom edge is still partly visible. Testing the whole row rectangle would let a click on the
-     * visible sliver hit a row whose body is clipped away, and rejecting partly visible rows would
-     * leave the sliver dead while still being drawn. Clipping the rectangle to the body matches the
-     * draw.
-     */
     private static boolean insideClipped(int mx, int my, int x, int y, int w, int h,
                                          int clipTop, int clipBottom) {
         int top = Math.max(y, clipTop);
@@ -947,185 +846,156 @@ public final class ClickGUI extends Screen {
         return bottom > top && my >= top && my < bottom && mx >= x && mx < x + w;
     }
 
-    /**
-     * Which half of an int setting's {@code ◂ value ▸} control the cursor is on: -1 for the left
-     * glyph, +1 for the right, 0 for anywhere else on the row. Uses the same layout the renderer
-     * draws, instead of splitting the whole row and letting a click on the name change the value.
-     */
-    private static int intZone(IntSetting setting, int mx, int cx, int cw) {
-        Font font = font();
-        String value = intLabel(setting);
-        int valueX = cx + cw - PAD_R - font.width(value);
-        int downW = font.width("◂") + 2;
-        int upX = valueX + font.width(value) - font.width("▸") - 2;
-        if (mx >= valueX - 2 && mx < valueX + downW) return -1;
-        if (mx >= upX && mx < upX + font.width("▸") + 4) return 1;
-        return 0;
-    }
-
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         int mx = (int) event.x();
         int my = (int) event.y();
-        // 26.3 reports mouse buttons with SDL numbering, not the GLFW 0/1 pair:
-        // InputConstants.MOUSE_BUTTON_LEFT is 1 and MOUSE_BUTTON_RIGHT is 3.
-        boolean left  = event.button() == InputConstants.MOUSE_BUTTON_LEFT;
+        boolean left = event.button() == InputConstants.MOUSE_BUTTON_LEFT;
         boolean right = event.button() == InputConstants.MOUSE_BUTTON_RIGHT;
 
-        // Only the front-most panel under the cursor takes the click, and it comes to the front.
-        Panel hit = panelAt(visiblePanels(), mx, my);
-        if (hit != null) {
-            bringToFront(hit);
-            handlePanelClick(hit, mx, my, left, right);
+        // Theme dots are reachable from both views.
+        int dot = themeDotAt(mx, my);
+        if (left && dot >= 0) {
+            ColorTheme.set(THEMES[dot]);
             return true;
         }
 
-        // theme swatch
-        if (left && inside(mx, my, menuX + MENU_W - 28, menuY + 2, 12, MENU_HDR_H - 4)) {
-            ColorTheme.cycle();
-            return true;
-        }
+        if (selected != null) return clickSheet(mx, my, left, right);
 
-        // close button
-        if (inside(mx, my, menuX + MENU_W - 14, menuY + 2, 12, MENU_HDR_H - 4)) {
-            Veil.mc.gui.setScreen(null);
-            return true;
-        }
-
-        // menu header drag
-        if (inside(mx, my, menuX, menuY, MENU_W, MENU_HDR_H)) {
-            draggingMenu = true;
-            dragOffX = mx - menuX;
-            dragOffY = my - menuY;
-            return true;
-        }
-
-        // search field: the "x" clears it, right-click anywhere on it clears it too
-        int sx = menuX + 4, sy = menuY + MENU_HDR_H + 3, sw = MENU_W - 8;
-        if (inside(mx, my, sx, sy, sw, SEARCH_H)) {
-            if (!search.isEmpty() && (right || inside(mx, my, sx + sw - 11, sy, 11, SEARCH_H))) search = "";
-            return true;
-        }
-
-        // category rows
-        int cy = menuRowsTop();
-        for (Category c : Category.values()) {
-            if (inside(mx, my, menuX, cy, MENU_W, ROW_H)) {
-                if (left) {
-                    if (!shown.remove(c)) {
-                        shown.add(c);
-                        Panel p = panels.get(c);
-                        bringToFront(p);
-                        if (panelFullHeight(p) > height - p.y - 2) layoutPanels();
-                    }
-                }
-                return true;
+        // Search field first: it sits above the cards and shares their horizontal band.
+        if (inside(mx, my, searchX, searchY, searchW, SEARCH_H)) {
+            if (!search.isEmpty() && (right || inside(mx, my, searchX + searchW - SEARCH_CLEAR,
+                    searchY, SEARCH_CLEAR, SEARCH_H))) {
+                search = "";
+                layout();
             }
-            cy += ROW_H;
+            return true;
         }
 
+        for (Card card : cards) {
+            if (!insideClipped(mx, my, card.x(), card.y(), card.w(), card.h(),
+                    cardsTop, cardsTop + cardsViewH)) continue;
+            if (!left) return true;
+            if (card.onToggle(mx, my)) card.module().toggle();
+            else openSheet(card.module());
+            return true;
+        }
         return super.mouseClicked(event, doubleClick);
     }
 
-    private void handlePanelClick(Panel p, int mx, int my, boolean left, boolean right) {
-        int viewH = panelViewHeight(p);
+    private boolean clickSheet(int mx, int my, boolean left, boolean right) {
+        // Anywhere outside the sheet, and both header glyphs, go back to the cards.
+        boolean outside = !inside(mx, my, sheetX, sheetY, sheetW, sheetH);
+        if (left && (outside || backHit(mx, my) || closeHit(mx, my))) {
+            closeSheet();
+            return true;
+        }
+        if (outside) return true;
 
-        if (inside(mx, my, p.x, p.y, PANEL_W, PANEL_HDR)) {
-            draggingPanel = true;
-            draggedPanel = p;
-            dragOffX = mx - p.x;
-            dragOffY = my - p.y;
+        if (overRow(mx, my, bindRowY, SET_ROW)) {
+            if (left) binding = selected;
+            else if (right) {
+                selected.setKeybind(Module.UNBOUND);
+                binding = null;
+            }
+            return true;
+        }
+
+        for (SheetRow row : sheetRows) {
+            if (!overRow(mx, my, row.y, row.h)) continue;
+            clickRow(row, mx, my, left, right);
+            return true;
+        }
+        return true;
+    }
+
+    /** Applies a click to one settings row; the caller has already claimed the click. */
+    private void clickRow(SheetRow row, int mx, int my, boolean left, boolean right) {
+        if (row.setting instanceof BoolSetting b) {
+            if (left) b.toggle();
             return;
         }
-
-        int cx = p.x + ROW_INSET, cw = CONTENT_W;
-        int cy = p.y + PANEL_HDR + 2 - scrollOf(p);
-        int top = p.y + PANEL_HDR;
-        int limit = p.y + viewH;
-        Font font = font();
-
-        for (Module m : modules(p.category)) {
-            if (insideClipped(mx, my, cx, cy, cw, ROW_H, top, limit)) {
-                if (left) {
-                    m.toggle();
-                    if (m.isEnabled()) pulseAnim.put(m, 1f);
-                } else if (right && !m.getSettings().isEmpty()) {
-                    if (!open.remove(m)) {
-                        open.add(m);
-                        // Start the drawer closed so it eases open rather than appearing at full
-                        // height; a closing drawer keeps its current value and eases down to 0.
-                        drawerAnim.put(m, 0f);
-                    }
-                }
-                return;
-            }
-            cy += ROW_H;
-
-            int drawerH = drawerHeight(m);
-            if (drawerH <= 0) continue;
-
-            // Mirror renderSettings: the drawer is clipped to its animated height, so a row below
-            // that edge is not under the cursor even though it will be once the drawer is open.
-            int drawerTop = cy;
-            int drawerLimit = Math.min(limit, drawerTop + drawerH);
-
-            // Must mirror renderSettings: the bind row comes before the settings.
-            if (insideClipped(mx, my, cx, cy, cw, SET_ROW, top, drawerLimit)) {
-                if (left) {
-                    bindingModule = m;
-                } else if (right) {
-                    m.setKeybind(Module.UNBOUND);
-                    bindingModule = null;
-                }
-                return;
-            }
-            cy += SET_ROW;
-
-            for (Setting<?> s : m.getSettings()) {
-                int h = rowHeight(s);
-                if (insideClipped(mx, my, cx, cy, cw, h, top, drawerLimit)) {
-                    if (s instanceof BoolSetting b && left) {
-                        b.toggle();
-                    } else if (s instanceof ModeSetting mode && left) {
-                        // Only the buttons count: the row's first line is the setting name, and a
-                        // click on it must not select whichever option happens to sit underneath.
-                        int btnTop = cy + MODE_LABEL_H;
-                        for (ModeButton btn : modeButtons(font, mode)) {
-                            if (inside(mx, my, cx + PAD_L + btn.x(), btnTop + btn.y(), btn.w(), MODE_BTN_H)) {
-                                mode.set(btn.option());
-                                break;
-                            }
-                        }
-                    } else if (s instanceof FloatSetting f && left) {
-                        draggingSlider = f;
-                        sliderPanel = p;
-                        slideTo(f, mx, p);
-                    } else if (s instanceof IntSetting i && (left || right)) {
-                        int zone = intZone(i, mx, cx, cw);
-                        // Right-click anywhere on the row steps down, so the value can be changed
-                        // without aiming at the small arrow glyphs.
-                        if (right) zone = zone == 0 ? -1 : zone;
-                        if (zone < 0) i.decrement();
-                        else if (zone > 0) i.increment();
-                    }
+        if (row.setting instanceof FloatSetting f) {
+            if (!left) return;
+            draggingSlider = f;
+            dragBarX = sheetLeft();
+            dragBarW = Math.max(1, innerW());
+            slideTo(f, mx);
+            return;
+        }
+        if (row.setting instanceof IntSetting in) {
+            if (!(left || right)) return;
+            int labelW = font.width(intLabel(in));
+            // A click left of the readout only opens the row; the arrows themselves step it.
+            if (mx < row.valueX - 2) return;
+            if (right || mx < row.valueX + labelW / 2) in.decrement();
+            else in.increment();
+            return;
+        }
+        if (row.setting instanceof ModeSetting mode && left) {
+            int btnTop = row.y + MODE_LABEL_H;
+            for (ModeButton btn : row.buttons) {
+                if (inside(mx, my, sheetLeft() + btn.x(), btnTop + btn.y(), btn.w(), MODE_BTN_H)) {
+                    mode.set(btn.option());
                     return;
                 }
-                cy += h;
             }
-            // The next module row starts where the drawer is drawn to end, not where it would end
-            // fully open; the two only differ mid-animation, but a click then must still land on
-            // the row that is drawn under the cursor.
-            cy = drawerTop + drawerH;
         }
+    }
+
+    private void openSheet(Module module) {
+        selected = module;
+        binding = null;
+        sheetScroll = 0f;
+        layout();
+    }
+
+    /** Back to the cards, dropping a bind that was being listened for on the sheet. */
+    private void closeSheet() {
+        selected = null;
+        binding = null;
+        sheetScroll = 0f;
+        layout();
+    }
+
+    private void slideTo(FloatSetting f, int mx) {
+        float fraction = (float) (mx - dragBarX) / dragBarW;
+        f.setFraction(Math.max(0f, Math.min(1f, fraction)));
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        if (draggingSlider != null) {
+            slideTo(draggingSlider, (int) event.x());
+            return true;
+        }
+        return super.mouseDragged(event, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        draggingSlider = null;
+        return super.mouseReleased(event);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        if (selected != null) {
+            int max = Math.max(0, sheetContentH - sheetH);
+            sheetScroll = Math.max(0f, Math.min(max, sheetScroll - (float) verticalAmount * 14f));
+            return true;
+        }
+        cardScroll = Math.max(0f, Math.min(cardScrollMax(), cardScroll - (float) verticalAmount * 14f));
+        return true;
     }
 
     @Override
     public boolean keyPressed(KeyEvent event) {
         // A module waiting for a bind swallows the key, including Escape (which cancels the bind
         // rather than closing the GUI, so a mistaken click does not throw the user out).
-        if (bindingModule != null) {
-            Module module = bindingModule;
-            bindingModule = null;
+        if (binding != null) {
+            Module module = binding;
+            binding = null;
             bindConsumedAt = System.nanoTime();
             if (event.key() == InputConstants.KEY_ESCAPE) return true;
             module.setKeybind(event.key() == InputConstants.KEY_BACKSPACE
@@ -1134,17 +1004,23 @@ public final class ClickGUI extends Screen {
             return true;
         }
 
-        if (event.key() == InputConstants.KEY_BACKSPACE && !search.isEmpty()) {
-            search = search.substring(0, search.length() - 1);
-            return true;
-        }
         if (event.key() == InputConstants.KEY_ESCAPE) {
-            // Escape clears a search first, then closes, so a typo does not cost the whole screen.
-            if (!search.isEmpty()) {
-                search = "";
+            // Escape leaves the settings sheet first, then clears a search, then closes the screen.
+            if (selected != null) {
+                closeSheet();
                 return true;
             }
-            Veil.mc.gui.setScreen(null);
+            if (!search.isEmpty()) {
+                search = "";
+                layout();
+                return true;
+            }
+            onClose();
+            return true;
+        }
+        if (event.key() == InputConstants.KEY_BACKSPACE && !search.isEmpty()) {
+            search = search.substring(0, search.length() - 1);
+            layout();
             return true;
         }
         return super.keyPressed(event);
@@ -1157,76 +1033,14 @@ public final class ClickGUI extends Screen {
     @Override
     public boolean charTyped(CharacterEvent event) {
         if (event.codepoint() < 32) return true;
-        if (bindingModule != null) return true;
+        if (binding != null) return true;
         if (bindConsumedAt != 0L && System.nanoTime() - bindConsumedAt < 100_000_000L) {
             bindConsumedAt = 0L;
             return true;
         }
         if (search.length() >= 32) return true;
         search += event.codepointAsString();
+        layout();
         return true;
-    }
-
-    @Override
-    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
-        int mx = (int) event.x();
-        int my = (int) event.y();
-
-        if (draggingSlider != null) {
-            // The panel can be hidden (category toggled off, or filtered out by the search) between
-            // press and drag; drop the drag rather than keep writing a value the user cannot see.
-            if (sliderPanel == null || !visiblePanels().contains(sliderPanel)) {
-                draggingSlider = null;
-                sliderPanel = null;
-            } else {
-                slideTo(draggingSlider, mx, sliderPanel);
-                return true;
-            }
-        }
-
-        if (draggingPanel && draggedPanel != null) {
-            Panel p = draggedPanel;
-            p.x = Math.max(0, Math.min(width - PANEL_W, mx - dragOffX));
-            p.y = Math.max(0, Math.min(height - PANEL_HDR - ROW_H, my - dragOffY));
-            return true;
-        }
-
-        if (draggingMenu) {
-            menuX = Math.max(0, Math.min(width - MENU_W, mx - dragOffX));
-            menuY = Math.max(0, Math.min(height - MENU_HDR_H, my - dragOffY));
-            return true;
-        }
-
-        return super.mouseDragged(event, dragX, dragY);
-    }
-
-    @Override
-    public boolean mouseReleased(MouseButtonEvent event) {
-        draggingMenu = false;
-        draggingPanel = false;
-        draggedPanel = null;
-        draggingSlider = null;
-        sliderPanel = null;
-        return super.mouseReleased(event);
-    }
-
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        Panel p = panelAt(visiblePanels(), (int) mouseX, (int) mouseY);
-        if (p != null) {
-            int stepped = scrollOf(p) - (int) (verticalAmount * ROW_H);
-            p.scroll = Math.max(0, Math.min(maxScroll(p), stepped));
-            return true;
-        }
-        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
-    }
-
-    private void slideTo(FloatSetting f, int mx, Panel p) {
-        int barX = p.x + ROW_INSET + PAD_L;
-        int barW = Math.max(1, INNER_W);
-        // The bar is what the value follows, not the whole row: dragging past either end pins to the
-        // ends instead of overshooting the setting's range.
-        float fraction = (float) (mx - barX) / barW;
-        f.setFraction(Math.max(0f, Math.min(1f, fraction)));
     }
 }

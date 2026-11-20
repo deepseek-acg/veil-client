@@ -1,5 +1,5 @@
 // lang: Java, file: SilentRotationMixin.java, target: Fabric MC 26.3
-// Intercepts outbound movement packets and injects the silent rotation queued by KillAura/AimAssist,
+// Intercepts outbound movement packets and injects the silent rotation queued by the auras,
 // so the server sees the aimed direction while the local camera stays where the player left it.
 // Priority 900 — runs before the event-posting hook in ClientPlayNetworkHandlerMixin.
 package com.veil.mixin;

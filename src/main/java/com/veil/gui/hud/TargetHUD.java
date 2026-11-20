@@ -7,14 +7,18 @@ import com.veil.event.EventHandler;
 import com.veil.event.events.HudRenderEvent;
 import com.veil.gui.Anim;
 import com.veil.gui.ColorTheme;
-import com.veil.module.modules.combat.KillAura;
+import com.veil.module.Module;
+import com.veil.module.ModuleManager;
+import com.veil.module.modules.combat.AnchorAura;
+import com.veil.module.modules.combat.CrystalAura;
 import net.minecraft.client.gui.Font;
 import net.minecraft.world.entity.LivingEntity;
 
 import java.util.Locale;
 
 /**
- * Target readout under the arraylist: name, health and distance to whatever KillAura is fighting.
+ * Target readout under the arraylist: name, health and distance to whoever the enabled aura is
+ * working on.
  *
  * <p>The box eases in rather than appearing whole — it slides in from the left, fades up and grows
  * its accent bar — and fades out over {@link #FADE_MS} once the target is gone, so the readout
@@ -54,7 +58,7 @@ public final class TargetHUD {
                 : Math.min(0.1f, (frame - lastFrameNs) / 1_000_000_000f);
         lastFrameNs = frame;
 
-        LivingEntity target = KillAura.getTarget();
+        LivingEntity target = combatTarget();
         if (target != null && target.isAlive()) {
             lastTarget = target;
             lastSeenMs = now;
@@ -109,6 +113,22 @@ public final class TargetHUD {
             ctx.fill(barX, barY, barX + fill, barY + 2,
                     Anim.alpha(Anim.mix(HP_LOW, HP_HIGH, fraction), strength));
         }
+    }
+
+    /**
+     * The target an enabled combat module is currently cycling on, or null when none has one.
+     *
+     * <p>Each aura owns its own idea of who it is fighting, so the readout asks them in registration
+     * order and takes the first that has someone. A module that is off never answers, which is what
+     * keeps a stale target from a module that was just switched off off the screen.
+     */
+    private static LivingEntity combatTarget() {
+        for (Module module : ModuleManager.getModules()) {
+            if (!module.isEnabled()) continue;
+            if (module instanceof CrystalAura aura && aura.target() != null) return aura.target();
+            if (module instanceof AnchorAura aura && aura.target() != null) return aura.target();
+        }
+        return null;
     }
 
     private static String ellipsize(Font font, String text, int maxWidth) {
