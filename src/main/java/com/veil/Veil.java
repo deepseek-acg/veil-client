@@ -23,7 +23,6 @@ public class Veil implements ClientModInitializer {
 
     public static Minecraft mc;
 
-    public static ClickGUI clickGUI;
     public static ArraylistHUD arraylistHUD;
     public static TargetHUD targetHUD;
 
@@ -50,7 +49,6 @@ public class Veil implements ClientModInitializer {
         // And write once more on the way out, so the last change before quitting is not lost.
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> Config.save());
 
-        clickGUI     = new ClickGUI();
         arraylistHUD = new ArraylistHUD();
         targetHUD    = new TargetHUD();
 
@@ -106,7 +104,11 @@ public class Veil implements ClientModInitializer {
         // Never open over another screen: the world is paused-free but a menu on top of a menu
         // leaves the GUI unable to receive input or to be closed.
         if (mc.gui.screen() == null) {
-            mc.gui.setScreen(clickGUI);
+            // Built here, at open time, and never at init: a Screen captures Minecraft.font in its
+            // constructor (Screen(Component) reads Minecraft.getInstance().font into a final field),
+            // and the font does not exist yet when client entrypoints run. A screen built at init
+            // therefore holds a null font and dies on its first text draw.
+            mc.gui.setScreen(new ClickGUI());
         }
     }
 }
